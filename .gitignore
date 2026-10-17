@@ -1,0 +1,5 @@
+.generated/
+.build/
+*.xcodeproj/
+__pycache__/
+.generated-project.json

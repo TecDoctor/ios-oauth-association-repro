@@ -1,0 +1,40 @@
+name: Standalone iOS association probe
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: association-probe
+  cancel-in-progress: false
+jobs:
+  probe:
+    if: ${{ github.event.repository.private == false }}
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Select original CI toolchain
+        run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+      - name: Install project generator
+        run: brew install xcodegen
+      - name: Configure and run isolated probe
+        env:
+          PROBE_CONFIG_JSON: ${{ secrets.PROBE_CONFIG_JSON }}
+        run: |
+          python3 scripts/configure.py
+          python3 scripts/run_probe.py
+      - name: Upload encrypted diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: encrypted-diagnostics
+          path: .build/diagnostics.enc
+          if-no-files-found: ignore
+          retention-days: 3
+      - name: Remove private generated material
+        if: always()
+        run: rm -rf -- .generated .generated-project.json .build AssociationProbe.xcodeproj
