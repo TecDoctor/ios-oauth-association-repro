@@ -42,16 +42,20 @@ def embedded_entitlements(binary):
     return None
 
 
-def seal_evidence(udid):
+def seal_evidence(udid, container):
     evidence = BUILD / "private-evidence"
     evidence.mkdir(exist_ok=True)
+    for name in ("probe-events.json", "private-error.json"):
+        source = container / "Documents" / name
+        if source.exists():
+            shutil.copyfile(source, evidence / name)
     try:
         run(["xcrun", "simctl", "io", udid, "screenshot", str(evidence / "screen.png")], timeout=120)
     except Exception:
         pass
     try:
-        logs = run(["xcrun", "simctl", "spawn", udid, "log", "show", "--last", "20m", "--style", "ndjson",
-                    "--predicate", 'process == "swcd" OR subsystem CONTAINS "AuthenticationServices"'], timeout=120)
+        logs = run(["xcrun", "simctl", "spawn", udid, "log", "show", "--last", "20m", "--style", "ndjson", "--info", "--debug",
+                    "--predicate", 'process == "swcd" OR process == "AssociationProbe" OR subsystem CONTAINS "AuthenticationServices"'], timeout=120)
         (evidence / "association-service.log").write_bytes(logs)
     except Exception:
         pass
@@ -101,8 +105,8 @@ def main():
     run(["xcrun", "simctl", "launch", udid, bundle], env=environment)
     container = Path(run(["xcrun", "simctl", "get_app_container", udid, bundle, "data"]).decode().strip())
     events_path = container / "Documents/probe-events.json"
-    allowed = {"handler", "configuration_failure", "callback_received", "association_failure", "other_session_failure", "empty_completion", "start_accepted", "start_rejected", "key_window_present", "key_window_missing"}
-    terminal = {"configuration_failure", "callback_received", "association_failure", "other_session_failure", "empty_completion", "start_rejected"}
+    allowed = {"handler", "configuration_failure", "callback_received", "association_failure", "other_session_failure", "empty_completion", "start_accepted", "start_rejected", "key_window_present", "key_window_missing", "scene_active", "scene_inactive", "presentation_context_invalid"}
+    terminal = {"configuration_failure", "callback_received", "association_failure", "other_session_failure", "empty_completion", "start_rejected", "presentation_context_invalid"}
     start = time.monotonic()
     seen = 0
     while time.monotonic() - start < 1000:
@@ -114,10 +118,10 @@ def main():
                 print(json.dumps({"event": event, "observed_after_seconds": round(time.monotonic() - start, 1)}), flush=True)
             seen = len(events)
             if terminal.intersection(events):
-                seal_evidence(udid)
+                seal_evidence(udid, container)
                 raise SystemExit(0 if "callback_received" in events else 1)
         time.sleep(2)
-    seal_evidence(udid)
+    seal_evidence(udid, container)
     print("INCONCLUSIVE: session did not complete; browser presentation is not verified.", flush=True)
     raise SystemExit(2)
 

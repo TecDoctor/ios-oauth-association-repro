@@ -4,13 +4,24 @@ import UIKit
 // Standalone diagnostic. No SDK code, credential entry, or token exchange.
 @main
 final class AppDelegate: UIResponder, UIApplicationDelegate {
+    func application(_ application: UIApplication, configurationForConnecting session: UISceneSession, options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        let configuration = UISceneConfiguration(name: "Probe", sessionRole: session.role)
+        configuration.delegateClass = SceneDelegate.self
+        return configuration
+    }
+}
+
+final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
-    func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        let window = UIWindow(frame: UIScreen.main.bounds)
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
+        guard let scene = scene as? UIWindowScene else { return }
+        let window = UIWindow(windowScene: scene)
         window.rootViewController = ProbeController()
-        window.makeKeyAndVisible()
         self.window = window
-        return true
+        window.makeKeyAndVisible()
+    }
+    func sceneDidBecomeActive(_ scene: UIScene) {
+        (window?.rootViewController as? ProbeController)?.startWhenReady()
     }
 }
 
@@ -35,7 +46,12 @@ final class ProbeController: UIViewController, ASWebAuthenticationPresentationCo
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        if ProcessInfo.processInfo.environment["PROBE_AUTOSTART"] == "1" {
+        startWhenReady()
+    }
+
+    func startWhenReady() {
+        if ProcessInfo.processInfo.environment["PROBE_AUTOSTART"] == "1",
+           viewIfLoaded?.window?.windowScene?.activationState == .foregroundActive {
             startProbe()
         }
     }
@@ -67,12 +83,24 @@ final class ProbeController: UIViewController, ASWebAuthenticationPresentationCo
                 if callback != nil {
                     self.record("callback_received")
                 } else if let error = error as NSError? {
-                    // Classify locally; never persist raw error text or callback URLs.
+                    // Raw error details stay private and are only exported inside encrypted evidence.
+                    let file = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                        .appendingPathComponent("private-error.json")
+                    let details: [String: Any] = ["domain": error.domain, "code": error.code,
+                        "description": error.localizedDescription,
+                        "failureReason": error.userInfo[NSLocalizedFailureReasonErrorKey] as? String ?? "",
+                        "debugDescription": error.userInfo[NSDebugDescriptionErrorKey] as? String ?? ""]
+                    if let data = try? JSONSerialization.data(withJSONObject: details) {
+                        try? data.write(to: file, options: .atomic)
+                    }
                     let description = [error.localizedDescription,
                         error.userInfo[NSLocalizedFailureReasonErrorKey] as? String ?? "",
                         error.userInfo[NSDebugDescriptionErrorKey] as? String ?? ""].joined(separator: " ").lowercased()
                     if description.contains("not associated") || description.contains("associated domain") {
                         self.record("association_failure")
+                    } else if error.domain == ASWebAuthenticationSessionErrorDomain,
+                              error.code == ASWebAuthenticationSessionError.Code.presentationContextInvalid.rawValue {
+                        self.record("presentation_context_invalid")
                     } else {
                         self.record("other_session_failure")
                     }
@@ -89,6 +117,7 @@ final class ProbeController: UIViewController, ASWebAuthenticationPresentationCo
 
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
         record(view.window?.isKeyWindow == true ? "key_window_present" : "key_window_missing")
+        record(view.window?.windowScene?.activationState == .foregroundActive ? "scene_active" : "scene_inactive")
         return view.window!
     }
 }
