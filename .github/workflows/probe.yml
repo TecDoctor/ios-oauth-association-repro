@@ -1,6 +1,8 @@
 name: Standalone iOS association probe
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
 permissions:
@@ -10,7 +12,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   probe:
-    if: ${{ github.event.repository.private == false }}
+    if: ${{ github.event.repository.private == false && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: macos-26
     timeout-minutes: 60
     steps:

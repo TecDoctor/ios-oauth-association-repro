@@ -24,7 +24,7 @@ credential is needed.
 Secret injection is not enough to keep these values private: the generated app,
 configuration, screenshots, and raw platform logs can contain the endpoint.
 Do not publish those files as unencrypted artifacts. The workflow prints only fixed event
-names and build/entitlement presence flags. It runs on maintainer pushes to main or manual dispatch, takes
+names and build/entitlement presence flags. It runs on maintainer pushes to main, same-repository pull requests, or manual dispatch, takes
 no untrusted inputs, and needs no private-repository checkout token.
 
 ## Local preparation
@@ -69,3 +69,6 @@ Unencrypted builds, logs, and screenshots are never uploaded.
 `SANDBOX_CREDENTIALS_JSON` may be provisioned separately for later login/logout
 verification. This initial workflow does not reference or read it. SDK repository
 access secrets are also unused.
+
+Fork pull requests are excluded from the diagnostic job. Repository review
+requirements remain in place; a diagnostic result does not bypass approval.
