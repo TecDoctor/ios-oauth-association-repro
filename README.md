@@ -72,3 +72,14 @@ access secrets are also unused.
 
 Fork pull requests are excluded from the diagnostic job. Repository review
 requirements remain in place; a diagnostic result does not bypass approval.
+
+## Association initialization race experiment
+
+The scene-based reproduction observed the native association rejection before
+the system registered the app and fetched its AASA document. On that specific
+error, the next experiment waits for the simulator's association-service log to
+show the configured domain fetch and app-identity parsing, then starts a new
+session through an XCUITest on the same simulator. It accepts the system consent
+prompt and checks for a browser web view. This log-based gate is a diagnostic
+experiment, not a proposed production SDK API or proof of successful login.
+The browser screenshot and raw test diagnostics are encrypted before upload.

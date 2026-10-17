@@ -15,6 +15,8 @@ BUILD.mkdir(exist_ok=True)
 
 def run(args, timeout=1800, env=None):
     result = subprocess.run(args, cwd=ROOT, capture_output=True, timeout=timeout, env=env)
+    if args and args[0] == "xcodebuild":
+        (BUILD / "private-xcodebuild.log").write_bytes(result.stdout + result.stderr)
     if result.returncode:
         # Arguments and output may include secret endpoints or identity.
         raise RuntimeError("Diagnostic subprocess failed; raw output withheld.")
@@ -45,6 +47,16 @@ def embedded_entitlements(binary):
 def seal_evidence(udid, container):
     evidence = BUILD / "private-evidence"
     evidence.mkdir(exist_ok=True)
+    build_log = BUILD / "private-xcodebuild.log"
+    if build_log.exists():
+        shutil.copyfile(build_log, evidence / "xcodebuild.log")
+    result_bundle = BUILD / "BrowserResult.xcresult"
+    if result_bundle.exists():
+        try:
+            run(["xcrun", "xcresulttool", "export", "attachments", "--path", str(result_bundle),
+                 "--output-path", str(evidence / "test-attachments")], timeout=120)
+        except Exception:
+            pass
     for name in ("probe-events.json", "private-error.json"):
         source = container / "Documents" / name
         if source.exists():
@@ -70,6 +82,49 @@ def seal_evidence(udid, container):
         shutil.rmtree(evidence)
 
 
+def await_association_processing(udid, config):
+    identity = config["APP_TEAM_ID"] + "." + config["APP_BUNDLE_ID"]
+    deadline = time.monotonic() + 1000
+    while time.monotonic() < deadline:
+        raw = run(["xcrun", "simctl", "spawn", udid, "log", "show", "--last", "20m", "--style", "ndjson",
+                   "--info", "--debug", "--predicate", 'process == "swcd"'], timeout=120)
+        messages = []
+        for line in raw.decode(errors="replace").splitlines():
+            try:
+                messages.append(json.loads(line).get("eventMessage", ""))
+            except ValueError:
+                continue
+        fetched = any("Beginning data task" in m and config["CALLBACK_HOST"] in m for m in messages)
+        parsed = any("JSON entry had" in m and identity in m for m in messages)
+        if fetched and parsed:
+            print("Association document fetch and app-identity parsing observed.", flush=True)
+            return
+        time.sleep(5)
+    raise RuntimeError("Association processing was not observed within its allowance.")
+
+
+def verify_browser_after_processing(udid, container):
+    private = BUILD / "private-evidence"
+    private.mkdir(exist_ok=True)
+    for name in ("probe-events.json", "private-error.json"):
+        source = container / "Documents" / name
+        if source.exists():
+            shutil.copyfile(source, private / ("first-attempt-" + name))
+            source.unlink()
+    config = json.loads(os.environ["PROBE_CONFIG_JSON"])
+    try:
+        await_association_processing(udid, config)
+        print("phase: browser-test-after-association-processing", flush=True)
+        run(["xcodebuild", "-project", "AssociationProbe.xcodeproj", "-scheme", "AssociationProbe",
+             "-configuration", "Debug", "-destination", "id=" + udid, "-derivedDataPath", str(BUILD),
+             "-resultBundlePath", str(BUILD / "BrowserResult.xcresult"), "-parallel-testing-enabled", "NO",
+             "-maximum-concurrent-test-simulator-destinations", "1", "-only-testing:ProbeUITests/BrowserPresentationTests/testAuthenticationBrowserOpens",
+             "test-without-building"], timeout=1800)
+        print("Browser UI test passed after association processing; this does not verify login/logout.", flush=True)
+    finally:
+        seal_evidence(udid, container)
+
+
 def main():
     if os.environ.get("GITHUB_ACTIONS") != "true":
         raise SystemExit("This runner must only be used in disposable GitHub Actions VMs.")
@@ -78,7 +133,7 @@ def main():
     print("phase: build", flush=True)
     run(["xcodebuild", "-project", "AssociationProbe.xcodeproj", "-scheme", "AssociationProbe",
          "-configuration", "Debug", "-sdk", "iphonesimulator", "-destination", "generic/platform=iOS Simulator",
-         "-derivedDataPath", str(BUILD), "ARCHS=arm64", "ONLY_ACTIVE_ARCH=YES", "-jobs", "2", "build"])
+         "-derivedDataPath", str(BUILD), "ARCHS=arm64", "ONLY_ACTIVE_ARCH=YES", "-jobs", "2", "build-for-testing"])
     app = BUILD / "Build/Products/Debug-iphonesimulator/AssociationProbe.app"
     expected = plistlib.loads((ROOT / ".generated/App.entitlements").read_bytes())
     actual = embedded_entitlements(app / "AssociationProbe")
@@ -117,6 +172,9 @@ def main():
             for event in events[seen:]:
                 print(json.dumps({"event": event, "observed_after_seconds": round(time.monotonic() - start, 1)}), flush=True)
             seen = len(events)
+            if "association_failure" in events:
+                verify_browser_after_processing(udid, container)
+                return
             if terminal.intersection(events):
                 seal_evidence(udid, container)
                 raise SystemExit(0 if "callback_received" in events else 1)
