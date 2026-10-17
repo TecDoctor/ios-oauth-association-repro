@@ -28,7 +28,9 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 final class ProbeController: UIViewController, ASWebAuthenticationPresentationContextProviding {
     private var session: ASWebAuthenticationSession?
     private var events: [String] = []
+    private var timeline: [[String: Any]] = []
     private var started = false
+    private let statusLabel = UILabel()
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -38,7 +40,14 @@ final class ProbeController: UIViewController, ASWebAuthenticationPresentationCo
         button.addTarget(self, action: #selector(startProbe), for: .touchUpInside)
         button.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(button)
+        statusLabel.accessibilityIdentifier = "probe-status"
+        statusLabel.text = "ready"
+        statusLabel.font = .preferredFont(forTextStyle: .caption1)
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(statusLabel)
         NSLayoutConstraint.activate([
+            statusLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            statusLabel.topAnchor.constraint(equalTo: button.bottomAnchor, constant: 16),
             button.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             button.centerYAnchor.constraint(equalTo: view.centerYAnchor)
         ])
@@ -58,10 +67,15 @@ final class ProbeController: UIViewController, ASWebAuthenticationPresentationCo
 
     private func record(_ event: String) {
         events.append(event)
+        timeline.append(["event": event, "time": Date().timeIntervalSince1970])
+        statusLabel.text = event
         let file = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("probe-events.json")
         if let data = try? JSONSerialization.data(withJSONObject: events) {
             try? data.write(to: file, options: .atomic)
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: timeline) {
+            try? data.write(to: file.deletingLastPathComponent().appendingPathComponent("probe-timeline.json"), options: .atomic)
         }
     }
 
@@ -108,6 +122,7 @@ final class ProbeController: UIViewController, ASWebAuthenticationPresentationCo
                     self.record("empty_completion")
                 }
                 self.session = nil
+                self.started = false
             }
         }
         session.presentationContextProvider = self

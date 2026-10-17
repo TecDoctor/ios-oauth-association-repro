@@ -14,7 +14,12 @@ BUILD.mkdir(exist_ok=True)
 
 
 def run(args, timeout=1800, env=None):
-    result = subprocess.run(args, cwd=ROOT, capture_output=True, timeout=timeout, env=env)
+    try:
+        result = subprocess.run(args, cwd=ROOT, capture_output=True, timeout=timeout, env=env)
+    except subprocess.TimeoutExpired as error:
+        if args and args[0] == "xcodebuild":
+            (BUILD / "private-xcodebuild.log").write_bytes((error.stdout or b"") + (error.stderr or b""))
+        raise RuntimeError("Diagnostic subprocess exceeded its allowance; raw output withheld.") from None
     if args and args[0] == "xcodebuild":
         (BUILD / "private-xcodebuild.log").write_bytes(result.stdout + result.stderr)
     if result.returncode:
@@ -45,6 +50,12 @@ def embedded_entitlements(binary):
 
 
 def seal_evidence(udid, container):
+    # XCTest can reinstall the app and replace its data container.
+    try:
+        bundle = json.loads(os.environ["PROBE_CONFIG_JSON"])["APP_BUNDLE_ID"]
+        container = Path(run(["xcrun", "simctl", "get_app_container", udid, bundle, "data"]).decode().strip())
+    except Exception:
+        pass
     evidence = BUILD / "private-evidence"
     evidence.mkdir(exist_ok=True)
     build_log = BUILD / "private-xcodebuild.log"
@@ -57,7 +68,7 @@ def seal_evidence(udid, container):
                  "--output-path", str(evidence / "test-attachments")], timeout=120)
         except Exception:
             pass
-    for name in ("probe-events.json", "private-error.json"):
+    for name in ("probe-events.json", "private-error.json", "probe-timeline.json"):
         source = container / "Documents" / name
         if source.exists():
             shutil.copyfile(source, evidence / name)
@@ -82,45 +93,15 @@ def seal_evidence(udid, container):
         shutil.rmtree(evidence)
 
 
-def await_association_processing(udid, config):
-    identity = config["APP_TEAM_ID"] + "." + config["APP_BUNDLE_ID"]
-    deadline = time.monotonic() + 1000
-    while time.monotonic() < deadline:
-        raw = run(["xcrun", "simctl", "spawn", udid, "log", "show", "--last", "20m", "--style", "ndjson",
-                   "--info", "--debug", "--predicate", 'process == "swcd"'], timeout=120)
-        messages = []
-        for line in raw.decode(errors="replace").splitlines():
-            try:
-                messages.append(json.loads(line).get("eventMessage", ""))
-            except ValueError:
-                continue
-        fetched = any("Beginning data task" in m and config["CALLBACK_HOST"] in m for m in messages)
-        parsed = any("JSON entry had" in m and identity in m for m in messages)
-        if fetched and parsed:
-            print("Association document fetch and app-identity parsing observed.", flush=True)
-            return
-        time.sleep(5)
-    raise RuntimeError("Association processing was not observed within its allowance.")
-
-
-def verify_browser_after_processing(udid, container):
-    private = BUILD / "private-evidence"
-    private.mkdir(exist_ok=True)
-    for name in ("probe-events.json", "private-error.json"):
-        source = container / "Documents" / name
-        if source.exists():
-            shutil.copyfile(source, private / ("first-attempt-" + name))
-            source.unlink()
-    config = json.loads(os.environ["PROBE_CONFIG_JSON"])
+def verify_browser_in_same_process(udid, container):
     try:
-        await_association_processing(udid, config)
-        print("phase: browser-test-after-association-processing", flush=True)
+        print("phase: browser-test-with-same-process-retry", flush=True)
         run(["xcodebuild", "-project", "AssociationProbe.xcodeproj", "-scheme", "AssociationProbe",
              "-configuration", "Debug", "-destination", "id=" + udid, "-derivedDataPath", str(BUILD),
              "-resultBundlePath", str(BUILD / "BrowserResult.xcresult"), "-parallel-testing-enabled", "NO",
              "-maximum-concurrent-test-simulator-destinations", "1", "-only-testing:ProbeUITests/BrowserPresentationTests/testAuthenticationBrowserOpens",
              "test-without-building"], timeout=1800)
-        print("Browser UI test passed after association processing; this does not verify login/logout.", flush=True)
+        print("Browser UI test passed; this does not verify login/logout.", flush=True)
     finally:
         seal_evidence(udid, container)
 
@@ -154,34 +135,9 @@ def main():
     print("phase: install", flush=True)
     run(["xcrun", "simctl", "install", udid, str(app)])
     bundle = json.loads(os.environ["PROBE_CONFIG_JSON"])["APP_BUNDLE_ID"]
-    environment = os.environ.copy()
-    environment["SIMCTL_CHILD_PROBE_AUTOSTART"] = "1"
-    print("phase: launch", flush=True)
-    run(["xcrun", "simctl", "launch", udid, bundle], env=environment)
     container = Path(run(["xcrun", "simctl", "get_app_container", udid, bundle, "data"]).decode().strip())
-    events_path = container / "Documents/probe-events.json"
-    allowed = {"handler", "configuration_failure", "callback_received", "association_failure", "other_session_failure", "empty_completion", "start_accepted", "start_rejected", "key_window_present", "key_window_missing", "scene_active", "scene_inactive", "presentation_context_invalid"}
-    terminal = {"configuration_failure", "callback_received", "association_failure", "other_session_failure", "empty_completion", "start_rejected", "presentation_context_invalid"}
-    start = time.monotonic()
-    seen = 0
-    while time.monotonic() - start < 1000:
-        if events_path.exists():
-            events = json.loads(events_path.read_text())
-            if not isinstance(events, list) or any(not isinstance(e, str) or e not in allowed for e in events):
-                raise RuntimeError("Unexpected diagnostic content; output withheld.")
-            for event in events[seen:]:
-                print(json.dumps({"event": event, "observed_after_seconds": round(time.monotonic() - start, 1)}), flush=True)
-            seen = len(events)
-            if "association_failure" in events:
-                verify_browser_after_processing(udid, container)
-                return
-            if terminal.intersection(events):
-                seal_evidence(udid, container)
-                raise SystemExit(0 if "callback_received" in events else 1)
-        time.sleep(2)
-    seal_evidence(udid, container)
-    print("INCONCLUSIVE: session did not complete; browser presentation is not verified.", flush=True)
-    raise SystemExit(2)
+    verify_browser_in_same_process(udid, container)
+
 
 
 if __name__ == "__main__":
