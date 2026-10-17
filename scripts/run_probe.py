@@ -58,9 +58,8 @@ def seal_evidence(udid, container):
         pass
     evidence = BUILD / "private-evidence"
     evidence.mkdir(exist_ok=True)
-    build_log = BUILD / "private-xcodebuild.log"
-    if build_log.exists():
-        shutil.copyfile(build_log, evidence / "xcodebuild.log")
+    for build_log in BUILD.glob("private-*.log"):
+        shutil.copyfile(build_log, evidence / build_log.name)
     result_bundle = BUILD / "BrowserResult.xcresult"
     if result_bundle.exists():
         try:
@@ -69,16 +68,22 @@ def seal_evidence(udid, container):
         except Exception:
             pass
     for name in ("probe-events.json", "private-error.json", "probe-timeline.json"):
+        if container is None:
+            continue
         source = container / "Documents" / name
         if source.exists():
             shutil.copyfile(source, evidence / name)
+    if container is not None:
+        sdk_events = container / "Library/Caches/e2e-oauth-events.json"
+        if sdk_events.exists():
+            shutil.copyfile(sdk_events, evidence / "sdk-oauth-events.json")
     try:
         run(["xcrun", "simctl", "io", udid, "screenshot", str(evidence / "screen.png")], timeout=120)
     except Exception:
         pass
     try:
-        logs = run(["xcrun", "simctl", "spawn", udid, "log", "show", "--last", "20m", "--style", "ndjson", "--info", "--debug",
-                    "--predicate", 'process == "swcd" OR process == "AssociationProbe" OR subsystem CONTAINS "AuthenticationServices"'], timeout=120)
+        logs = run(["xcrun", "simctl", "spawn", udid, "log", "show", "--last", "60m", "--style", "ndjson", "--info", "--debug",
+                    "--predicate", 'process == "swcd" OR process == "AssociationProbe" OR process == "SampleApp" OR subsystem CONTAINS "AuthenticationServices"'], timeout=120)
         (evidence / "association-service.log").write_bytes(logs)
     except Exception:
         pass

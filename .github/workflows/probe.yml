@@ -1,6 +1,12 @@
-name: Standalone iOS association probe
+name: iOS sandbox verification
 on:
   workflow_dispatch:
+    inputs:
+      test_mode:
+        description: Verification scope
+        type: choice
+        default: sdk
+        options: [sdk, probe]
   pull_request:
     branches: [main]
   push:
@@ -14,21 +20,60 @@ jobs:
   probe:
     if: ${{ github.event.repository.private == false && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 90
+    env:
+      TEST_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.test_mode || 'sdk' }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          persist-credentials: false
+      - name: Check private SDK secret availability
+        if: env.TEST_MODE == 'sdk'
+        env:
+          SDK_CLIENT_ID: ${{ secrets.HEALTH_PORTAL_SDK_REPO_ACCESS_APP_CLIENT_ID || vars.HEALTH_PORTAL_SDK_REPO_ACCESS_APP_CLIENT_ID }}
+          SDK_PRIVATE_KEY: ${{ secrets.HEALTH_PORTAL_SDK_REPO_ACCESS_APP_PRIVATE_KEY }}
+          SANDBOX_CREDENTIALS_JSON: ${{ secrets.SANDBOX_CREDENTIALS_JSON }}
+        run: |
+          python3 - <<'PYCODE'
+          import os
+          missing = [name for name in ('SDK_CLIENT_ID', 'SDK_PRIVATE_KEY', 'SANDBOX_CREDENTIALS_JSON') if not os.environ.get(name)]
+          if missing:
+              raise SystemExit('Required Actions configuration is unavailable: ' + ', '.join(missing))
+          PYCODE
+      - name: Create read-only SDK checkout token
+        if: env.TEST_MODE == 'sdk'
+        id: sdk-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          client-id: ${{ secrets.HEALTH_PORTAL_SDK_REPO_ACCESS_APP_CLIENT_ID || vars.HEALTH_PORTAL_SDK_REPO_ACCESS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.HEALTH_PORTAL_SDK_REPO_ACCESS_APP_PRIVATE_KEY }}
+          owner: TecDoctor
+          repositories: health-portal-sdk-ios
+          permission-contents: read
+      - name: Fetch pinned private SDK sample
+        if: env.TEST_MODE == 'sdk'
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: TecDoctor/health-portal-sdk-ios
+          ref: ac48dd6d9d4d4b5d89b8e3297391e89dd52d25a0
+          path: sdk-private
+          token: ${{ steps.sdk-token.outputs.token }}
           persist-credentials: false
       - name: Select original CI toolchain
         run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
       - name: Install project generator
         run: brew install xcodegen
-      - name: Configure and run isolated probe
+      - name: Configure and run selected verification
         env:
           PROBE_CONFIG_JSON: ${{ secrets.PROBE_CONFIG_JSON }}
+          SANDBOX_CREDENTIALS_JSON: ${{ secrets.SANDBOX_CREDENTIALS_JSON }}
         run: |
           python3 scripts/configure.py
-          python3 scripts/run_probe.py
+          if [ "$TEST_MODE" = sdk ]; then
+            python3 scripts/run_sdk_test.py
+          else
+            python3 scripts/run_probe.py
+          fi
       - name: Upload encrypted diagnostic evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -39,4 +84,4 @@ jobs:
           retention-days: 3
       - name: Remove private generated material
         if: always()
-        run: rm -rf -- .generated .generated-project.json .build AssociationProbe.xcodeproj
+        run: rm -rf -- .generated .generated-project.json .build AssociationProbe.xcodeproj sdk-private

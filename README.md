@@ -1,85 +1,66 @@
-# iOS HTTPS authentication association reproduction
+# iOS sandbox authentication diagnostics
 
-A standalone UIKit app that starts Apple's ASWebAuthenticationSession with an
-HTTPS callback. Written independently for this reproduction; no private SDK,
-package dependency, or account credentials are required.
-
-This probe isolates domain association and session presentation. It does NOT
-perform a full login/logout or exchange authorization codes for tokens. An
-accepted start or a pending session is NOT proof that the browser appeared.
+This repository contains an independently written UIKit association probe and
+UI-only tests for a privately fetched SDK sample. No private SDK source, built
+applications, endpoint configuration, or credentials are committed here.
 
 ## Configuration
 
-Create one Actions repository secret, `PROBE_CONFIG_JSON`, containing a JSON
-object with `ISSUER_URL`, `CLIENT_ID`, `CALLBACK_HOST`, `CALLBACK_PATH`,
-`APP_BUNDLE_ID`, and `APP_TEAM_ID`. Use an app identity already authorized by
-the callback domain's apple-app-site-association document. A different identity
-needs its own AASA registration; otherwise rejection is expected.
+Actions requires `PROBE_CONFIG_JSON` with `ISSUER_URL`, `CLIENT_ID`,
+`CALLBACK_HOST`, `CALLBACK_PATH`, `APP_BUNDLE_ID`, and `APP_TEAM_ID`.
+The identity must already be authorized by the callback domain's AASA document.
 
-The configuration script performs OIDC discovery and creates a fresh request
-with state, nonce, and PKCE challenge. It does not retain a PKCE verifier or
-redeem a returned authorization code. No login password or private SDK access
-credential is needed.
+Full SDK verification additionally requires:
 
-Secret injection is not enough to keep these values private: the generated app,
-configuration, screenshots, and raw platform logs can contain the endpoint.
-Do not publish those files as unencrypted artifacts. The workflow prints only fixed event
-names and build/entitlement presence flags. It runs on maintainer pushes to main, same-repository pull requests, or manual dispatch, takes
-no untrusted inputs, and needs no private-repository checkout token.
+- `SANDBOX_CREDENTIALS_JSON` with `E2E_USERNAME` and `E2E_PASSWORD`.
+- `HEALTH_PORTAL_SDK_REPO_ACCESS_APP_PRIVATE_KEY` as an Actions secret.
+- `HEALTH_PORTAL_SDK_REPO_ACCESS_APP_CLIENT_ID` as an Actions secret or variable.
+- The GitHub App must have read access to the private SDK repository.
 
-## Local preparation
+Organization secrets/variables must include this repository in their access
+selection. The checkout token has contents-read permission and is not persisted.
+SDK source is pinned to the diagnostic revision recorded in the workflow.
 
-Install XcodeGen if needed. Export `PROBE_CONFIG_JSON` into the environment,
-then run `python3 scripts/configure.py` and
-`xcodegen generate --spec .generated-project.json`.
-Build the AssociationProbe scheme for the iOS Simulator.
+## Execution
 
-Do not install over an existing app with the same bundle ID on a developer's
-running simulator. Use the disposable hosted simulator for this reproduction.
-The preparation/typecheck of this source does not start or modify a simulator.
+Maintainer pull requests and main pushes run the full SDK verification. Manual
+dispatch can select `sdk` or `probe`. Fork pull requests do not receive a job.
+The workflow uses standard public `macos-26`, Xcode 26.6, and exactly one fresh
+CI-owned iPhone SE (third generation) with iOS 26.2. It runs neither Android nor
+Docker. Each build uses two compiler workers. It does not touch local simulators.
 
-## Interpretation
+The SDK test verifies authenticated state, logout, and logout persistence after
+relaunch. It centers controls away from header overlays and allows 1000 seconds
+for asynchronous UI phases. Before credentials are entered, a failed SDK login
+can be retried in the same app, with screenshots and private native diagnostics.
+A browser alone is not considered successful authentication.
 
-`association_failure` is the failure of interest. `other_session_failure` needs
-further private diagnostics; cancellation also reaches that category.
-`callback_received` is only evidence that Apple returned a callback, not that
-login or token exchange succeeded. A session that stays pending needs separate
-visual confirmation before claiming success.
+## Association probe
 
-Next diagnostics should compare the finished executable's embedded associated
-domains with the generated configuration and inspect iOS association-service
-state. Public reports must redact hostnames and app identity. No full SDK test
-or existing private workflow should be moved here without a separate review.
+The standalone app uses ASWebAuthenticationSession with an HTTPS callback and
+an active scene presentation window. It generates a fresh PKCE challenge but
+does not retain a verifier, exchange tokens, or verify login/logout.
 
-## Hosted execution
+The cold simulator rejected the first five native sessions in run 39021198545;
+the sixth opened the authentication browser about 62 seconds after the first
+attempt. Screenshots confirm browser presentation, with the page still loading.
+This supports delayed association readiness. It does not prove full login.
 
-The workflow uses the standard public `macos-26` runner,
-Xcode 26.6, and one fresh iPhone SE / iOS 26.2 simulator. It does not run Android,
-Docker, or a private repository's CI. It refuses to substitute another runtime.
-The session observation allowance is 1000 seconds. Explicit terminal errors
-finish early. Each build has two compiler workers.
+The probe retries only explicit domain-association errors within the same app
+process, for at most 1000 seconds. Other terminal errors fail immediately.
+Waiting for association logs before XCTest was insufficient in an earlier run:
+XCTest installation changed the app registration and prompted another refresh.
 
-The initial run diagnoses executable and debug-library entitlement placement.
-It does not silently change signing or disable the debug library to obtain a
-passing result. The final screenshot and association-service logs are encrypted using the
-committed public certificate before upload. The private decryption key is held
-outside this repository. The encrypted artifact expires after three days.
-Unencrypted builds, logs, and screenshots are never uploaded.
+## Private evidence
 
-`SANDBOX_CREDENTIALS_JSON` may be provisioned separately for later login/logout
-verification. This initial workflow does not reference or read it. SDK repository
-access secrets are also unused.
+Raw build/test logs, screenshots, native errors, and system logs can contain
+private values. They are encrypted with `diagnostics/recipient.pem` before
+artifact upload. The matching private key is held outside this repository.
+Artifacts expire after three days. No public Actions cache is used for SDK code
+or builds. Generated configuration, SDK checkout and build files are removed
+at the end of the job. Never upload plaintext logs or app bundles.
 
-Fork pull requests are excluded from the diagnostic job. Repository review
-requirements remain in place; a diagnostic result does not bypass approval.
-
-## Association initialization race experiment
-
-The scene-based reproduction observed the native association rejection before
-the system registered the app and fetched its AASA document. On that specific
-error, the next experiment waits for the simulator's association-service log to
-show the configured domain fetch and app-identity parsing, then starts a new
-session through an XCUITest on the same simulator. It accepts the system consent
-prompt and checks for a browser web view. This log-based gate is a diagnostic
-experiment, not a proposed production SDK API or proof of successful login.
-The browser screenshot and raw test diagnostics are encrypted before upload.
+Local generic simulator compilation is supported for validation, but both run
+scripts refuse to operate outside GitHub Actions. Do not install the probe over
+an existing local app with the same identity. Repository review requirements
+remain in place; successful diagnostics do not bypass approval.
