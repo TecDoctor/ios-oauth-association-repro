@@ -140,7 +140,7 @@ final class SDKAuthenticationTests: XCTestCase {
         keyboardAction(["Done", "完了"])
         var submitted = false
         for owner in [app!, browser] {
-            let button = owner.buttons.matching(NSPredicate(format: "label IN %@", ["Log In", "Sign In", "ログイン"])).firstMatch
+            let button = owner.webViews.buttons.matching(NSPredicate(format: "label IN %@", ["Log In", "Sign In", "ログイン"])).firstMatch
             if button.exists {
                 center(button, in: owner)
                 button.tap()
