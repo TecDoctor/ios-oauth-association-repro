@@ -64,8 +64,22 @@ final class SDKAuthenticationTests: XCTestCase {
     }
 
     private func replace(_ element: XCUIElement, with value: String) {
-        element.tap()
-        let count = (element.value as? String)?.count ?? 0
+        func focused() -> Bool {
+            for owner in [app!, browser] {
+                let query = owner.descendants(matching: element.elementType)
+                if query.matching(NSPredicate(format: "hasKeyboardFocus == true AND label == %@", element.label)).firstMatch.exists { return true }
+            }
+            return false
+        }
+        if !focused() {
+            // Safari's input accessory toolbar can cover the next field.
+            keyboardAction(["Done", "完了"])
+            center(element, in: app)
+            element.tap()
+        }
+        wait("The requested input field did not obtain keyboard focus.") { focused() }
+        let current = element.value as? String ?? ""
+        let count = current == element.placeholderValue ? 0 : current.count
         if count > 0 { element.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: count)) }
         element.typeText(value)
     }
@@ -73,8 +87,11 @@ final class SDKAuthenticationTests: XCTestCase {
     private func keyboardAction(_ labels: [String]) {
         for owner in [app!, browser] {
             for label in labels {
-                let button = owner.keyboards.buttons[label].firstMatch
-                if button.exists && button.isHittable { button.tap(); return }
+                // Safari renders Next/Done in an accessory toolbar, outside Keyboard.
+                for query in [owner.toolbars.buttons, owner.keyboards.buttons] {
+                    let button = query[label].firstMatch
+                    if button.exists && button.isHittable { button.tap(); return }
+                }
             }
         }
     }
