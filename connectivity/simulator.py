@@ -28,9 +28,24 @@ run('xcrun', 'simctl', 'bootstatus', udid, '-b', timeout=600)
 with urllib.request.urlopen('http://127.0.0.1:8080/', timeout=30) as response:
     assert b'Welcome to nginx' in response.read()
 print('Docker HTTP check passed after simulator boot.', flush=True)
-try:
-    run('xcrun', 'simctl', 'openurl', udid, 'http://127.0.0.1:8080/', timeout=300)
-    time.sleep(30)
-finally:
-    run('xcrun', 'simctl', 'io', udid, 'screenshot', str(Path(os.environ['RUNNER_TEMP'], 'simulator-proof.png')), timeout=120)
-print('Docker remained reachable from macOS after simulator boot. Inspect Safari screenshot separately.', flush=True)
+deadline = time.monotonic() + 600
+attempt = 0
+observed = False
+while time.monotonic() < deadline:
+    attempt += 1
+    try:
+        run('xcrun', 'simctl', 'openurl', udid, 'http://127.0.0.1:8080/', timeout=120)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        print('Safari readiness attempt', attempt, type(error).__name__, flush=True)
+    time.sleep(15)
+    try:
+        run('xcrun', 'simctl', 'io', udid, 'screenshot', str(Path(os.environ['RUNNER_TEMP'], 'simulator-proof.png')), timeout=90)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        print('Screenshot attempt', attempt, type(error).__name__, flush=True)
+    logs = run('docker', 'compose', '-f', 'connectivity/compose.yml', 'logs', '--no-color', capture_output=True, text=True, timeout=60).stdout
+    if any('GET / HTTP/' in line and ' 200 ' in line and 'iPhone' in line for line in logs.splitlines()):
+        observed = True
+        print('Container recorded a successful iPhone browser HTTP request.', flush=True)
+        break
+if not observed:
+    raise RuntimeError('No successful iPhone browser request within the Safari readiness window')
