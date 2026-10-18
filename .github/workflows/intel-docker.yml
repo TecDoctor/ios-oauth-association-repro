@@ -8,7 +8,7 @@ permissions:
 jobs:
   docker:
     runs-on: macos-26-intel
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -24,6 +24,23 @@ jobs:
           curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 3 --max-time 10 http://127.0.0.1:8080/ > "$RUNNER_TEMP/response.html"
           grep -q 'Welcome to nginx' "$RUNNER_TEMP/response.html"
           echo 'Docker installation, Compose startup through Make, and macOS-to-container HTTP passed.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Boot one existing iPhone while Docker remains running
+        timeout-minutes: 15
+        run: |
+          python3 connectivity/simulator.py
+      - name: Retain simulator screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-simulator-proof
+          path: ${{ runner.temp }}/simulator-proof.png
+          if-no-files-found: warn
+      - name: Stop only the selected CI simulator
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/probe-simulator" ]; then
+            xcrun simctl shutdown "$(cat "$RUNNER_TEMP/probe-simulator")" || true
+          fi
       - name: Collect Docker diagnostics
         if: always()
         run: |
