@@ -1,0 +1,37 @@
+name: Intel macOS Docker installation proof
+on:
+  push:
+    branches: [codex/HEP-3370-intel-docker]
+    paths: [connectivity/**, .github/workflows/intel-docker.yml]
+permissions:
+  contents: read
+jobs:
+  docker:
+    runs-on: macos-26-intel
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Install pinned Docker tools without Homebrew
+        timeout-minutes: 15
+        run: bash connectivity/install-docker.sh
+      - name: Start synthetic service through Make
+        working-directory: connectivity
+        run: make docker.up
+      - name: Verify macOS reaches the container
+        run: |
+          curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 3 --max-time 10 http://127.0.0.1:8080/ > "$RUNNER_TEMP/response.html"
+          grep -q 'Welcome to nginx' "$RUNNER_TEMP/response.html"
+          echo 'Docker installation, Compose startup through Make, and macOS-to-container HTTP passed.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Collect Docker diagnostics
+        if: always()
+        run: |
+          command -v colima && colima status || true
+          command -v docker && docker ps -a || true
+          find "$HOME/.lima" "$HOME/.colima" -name '*stderr.log' -type f -exec tail -n 60 {} \; 2>/dev/null || true
+      - name: Stop synthetic service through Make
+        if: always()
+        working-directory: connectivity
+        run: |
+          if docker info >/dev/null 2>&1; then make docker.down; fi
