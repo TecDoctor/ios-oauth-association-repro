@@ -1,0 +1,47 @@
+name: Intel normal-user forwarding proof
+on:
+  push:
+    branches: [codex/HEP-3370-forwarding]
+    paths: [forwarding/**, .github/workflows/forwarding.yml]
+permissions:
+  contents: read
+jobs:
+  forward:
+    runs-on: macos-26-intel
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Install previously verified Docker tools
+        timeout-minutes: 15
+        run: bash connectivity/install-docker.sh
+      - name: Start generic endpoint through Make
+        working-directory: connectivity
+        run: make docker.up
+      - name: Verify forwarding survives the initiating process
+        run: |
+          mkdir -p "$HOME/.ssh"
+          echo 'Include ~/.colima/ssh_config' >> "$HOME/.ssh/config"
+          ssh -G colima | grep -E '^(controlmaster|controlpersist|forkafterauthentication) '
+          make -C forwarding forward > "$RUNNER_TEMP/forward.log" 2>&1 &
+          forward_pid=$!
+          for attempt in $(seq 1 60); do
+            if ! kill -0 "$forward_pid" 2>/dev/null; then
+              wait "$forward_pid" || { cat "$RUNNER_TEMP/forward.log"; exit 1; }
+              echo 'Initiating Make process exited successfully.'
+            fi
+            if curl --fail --silent --show-error --noproxy '*' --max-time 5 http://127.0.0.1:443/ > "$RUNNER_TEMP/forward-response"; then
+              grep -q 'Welcome to nginx' "$RUNNER_TEMP/forward-response"
+              echo 'Normal-user port 443 forwarding passed.' >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/forward.log"
+          exit 1
+      - name: Stop generic endpoint
+        if: always()
+        working-directory: connectivity
+        run: |
+          if docker info >/dev/null 2>&1; then make docker.down; fi
