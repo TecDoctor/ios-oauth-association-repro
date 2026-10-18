@@ -1,0 +1,113 @@
+name: Linux to macOS connectivity proof
+on:
+  push:
+    branches: [codex/HEP-3370-connectivity]
+    paths: [.github/workflows/runner-connectivity.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  endpoint:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 6
+    steps:
+      - name: Start a synthetic HTTPS endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/probe"
+          cd "$RUNNER_TEMP/probe"
+          curl --fail --silent --show-error --max-time 15 https://api.ipify.org > address
+          python3 -c 'import ipaddress; print(ipaddress.IPv4Address(open("address").read().strip()))' > ipv4
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -keyout server.key -out ca.pem -subj /CN=runner-probe \
+            -addext "subjectAltName=IP:$(cat ipv4)" 2>/dev/null
+          python3 -c 'import secrets; print(secrets.token_hex(24))' > challenge
+          cat > server.py <<'PY'
+          import http.server
+          import pathlib
+          import ssl
+          class Handler(http.server.BaseHTTPRequestHandler):
+              def do_GET(self):
+                  challenge = pathlib.Path('challenge').read_text().strip()
+                  if self.path != '/' + challenge:
+                      self.send_error(404)
+                      return
+                  self.send_response(200)
+                  self.end_headers()
+                  self.wfile.write(challenge.encode())
+              def log_message(self, *args):
+                  pass
+          server = http.server.ThreadingHTTPServer(('0.0.0.0', 8443), Handler)
+          context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+          context.load_cert_chain('ca.pem', 'server.key')
+          server.socket = context.wrap_socket(server.socket, server_side=True)
+          server.serve_forever()
+          PY
+          python3 server.py > server.log 2>&1 &
+          echo "$!" > server.pid
+          sleep 1
+          kill -0 "$(cat server.pid)"
+          curl --fail --silent --cacert ca.pem \
+            --resolve "$(cat ipv4):8443:127.0.0.1" \
+            "https://$(cat ipv4):8443/$(cat challenge)" > local-response
+          cmp challenge <(cat local-response; echo)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: connectivity-endpoint-${{ github.run_attempt }}
+          retention-days: 1
+          path: |
+            ${{ runner.temp }}/probe/ipv4
+            ${{ runner.temp }}/probe/ca.pem
+            ${{ runner.temp }}/probe/challenge
+      - name: Keep endpoint alive during the client probe
+        shell: bash
+        run: |
+          for attempt in $(seq 1 48); do
+            kill -0 "$(cat "$RUNNER_TEMP/probe/server.pid")"
+            sleep 5
+          done
+      - name: Stop endpoint
+        if: always()
+        shell: bash
+        run: |
+          if [ -f "$RUNNER_TEMP/probe/server.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/probe/server.pid")" || true
+          fi
+  client:
+    runs-on: macos-26
+    timeout-minutes: 5
+    steps:
+      - name: Fetch endpoint coordinates while Linux stays running
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          ATTEMPT: ${{ github.run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/probe"
+          cd "$RUNNER_TEMP/probe"
+          for attempt in $(seq 1 36); do
+            id=$(gh api "repos/$REPOSITORY/actions/runs/$RUN_ID/artifacts" \
+              --jq ".artifacts[] | select(.name == \"connectivity-endpoint-$ATTEMPT\") | .id")
+            if [ -n "$id" ]; then
+              gh api "repos/$REPOSITORY/actions/artifacts/$id/zip" > endpoint.zip
+              unzip -q endpoint.zip
+              exit 0
+            fi
+            sleep 5
+          done
+          echo 'Linux endpoint did not publish its coordinates within 180 seconds.' >&2
+          exit 1
+      - name: Verify direct HTTPS from macOS to Linux
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/probe"
+          curl --fail --silent --show-error --noproxy '*' \
+            --connect-timeout 15 --max-time 30 --cacert ca.pem \
+            "https://$(cat ipv4):8443/$(cat challenge)" > response
+          cmp challenge <(cat response; echo)
+          echo 'Direct macOS → Linux HTTPS returned the exact per-run challenge.' >> "$GITHUB_STEP_SUMMARY"
