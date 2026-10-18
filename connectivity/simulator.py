@@ -27,7 +27,10 @@ run('xcrun', 'simctl', 'bootstatus', udid, '-b', timeout=600)
 # of simulator routing separately, without claiming that opening a URL proves it.
 with urllib.request.urlopen('http://127.0.0.1:8080/', timeout=30) as response:
     assert b'Welcome to nginx' in response.read()
-run('xcrun', 'simctl', 'openurl', udid, 'http://127.0.0.1:8080/')
-time.sleep(30)
-run('xcrun', 'simctl', 'io', udid, 'screenshot', str(Path(os.environ['RUNNER_TEMP'], 'simulator-proof.png')))
+print('Docker HTTP check passed after simulator boot.', flush=True)
+try:
+    run('xcrun', 'simctl', 'openurl', udid, 'http://127.0.0.1:8080/', timeout=300)
+    time.sleep(30)
+finally:
+    run('xcrun', 'simctl', 'io', udid, 'screenshot', str(Path(os.environ['RUNNER_TEMP'], 'simulator-proof.png')), timeout=120)
 print('Docker remained reachable from macOS after simulator boot. Inspect Safari screenshot separately.', flush=True)
