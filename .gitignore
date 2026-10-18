@@ -3,3 +3,4 @@
 *.xcodeproj/
 __pycache__/
 .generated-project.json
+sdk-private/
