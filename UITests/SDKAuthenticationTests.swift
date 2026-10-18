@@ -4,11 +4,10 @@ import XCTest
 final class SDKAuthenticationTests: XCTestCase {
     private let allowance: TimeInterval = 1000
     private let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-    private let browser = XCUIApplication(bundleIdentifier: "com.apple.SafariViewService")
     private var app: XCUIApplication!
 
     private func consent() {
-        for owner in [system, app!, browser] {
+        for owner in [system, app!] {
             for label in ["Continue", "続ける", "Allow"] {
                 let button = owner.alerts.buttons[label].firstMatch
                 if button.exists && button.isHittable { button.tap() }
@@ -55,7 +54,7 @@ final class SDKAuthenticationTests: XCTestCase {
     }
 
     private func field(labels: [String], secure: Bool) -> XCUIElement? {
-        for owner in [app!, browser] {
+        for owner in [app!] {
             let query = secure ? owner.secureTextFields : owner.textFields
             let element = query.matching(NSPredicate(format: "label IN %@ OR identifier IN %@", labels, labels)).firstMatch
             if element.exists { return element }
@@ -65,7 +64,7 @@ final class SDKAuthenticationTests: XCTestCase {
 
     private func replace(_ element: XCUIElement, with value: String) {
         func focused() -> Bool {
-            for owner in [app!, browser] {
+            for owner in [app!] {
                 let query = owner.descendants(matching: element.elementType)
                 if query.matching(NSPredicate(format: "hasKeyboardFocus == true AND label == %@", element.label)).firstMatch.exists { return true }
             }
@@ -85,7 +84,7 @@ final class SDKAuthenticationTests: XCTestCase {
     }
 
     private func keyboardAction(_ labels: [String]) {
-        for owner in [app!, browser] {
+        for owner in [app!] {
             for label in labels {
                 // Safari renders Next/Done in an accessory toolbar, outside Keyboard.
                 for query in [owner.toolbars.buttons, owner.keyboards.buttons] {
@@ -139,7 +138,7 @@ final class SDKAuthenticationTests: XCTestCase {
         replace(passwordField, with: password)
         keyboardAction(["Done", "完了"])
         var submitted = false
-        for owner in [app!, browser] {
+        for owner in [app!] {
             let button = owner.webViews.buttons.matching(NSPredicate(format: "label IN %@", ["Log In", "Sign In", "ログイン"])).firstMatch
             if button.exists {
                 center(button, in: owner)
@@ -152,7 +151,7 @@ final class SDKAuthenticationTests: XCTestCase {
         let authenticated = app.staticTexts["ログイン済み"]
         wait("SDK did not enter its authenticated state.") {
             if authenticated.exists { return true }
-            for owner in [self.app!, self.browser] {
+            for owner in [self.app!] {
                 let terms = owner.buttons.matching(NSPredicate(format: "label CONTAINS %@", "同意して登録する")).firstMatch
                 if terms.exists {
                     if terms.isEnabled { self.center(terms, in: owner); terms.tap() }
