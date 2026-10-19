@@ -1,0 +1,23 @@
+{
+	admin off
+}
+https://localhost, https://127.0.0.1 {
+	tls internal
+	log {
+		output stdout
+		format json
+	}
+	handle /container {
+		reverse_proxy endpoint:8080
+	}
+	handle /host {
+		rewrite * /
+		reverse_proxy host.docker.internal:8765
+	}
+	handle /browser-proof {
+		respond "BROWSER_OK"
+	}
+	handle {
+		reverse_proxy endpoint:8080
+	}
+}

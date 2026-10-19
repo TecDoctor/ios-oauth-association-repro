@@ -1,0 +1,8 @@
+.:1053 {
+    hosts {
+        127.0.0.1 synthetic.test
+        fallthrough
+    }
+    log
+    errors
+}

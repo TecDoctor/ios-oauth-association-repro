@@ -1,0 +1,128 @@
+name: Synthetic Caddy and iOS trust proof
+on:
+  push:
+    branches: [codex/HEP-3370-caddy-infra]
+    paths: [infra-probe/**, .github/workflows/caddy-infra.yml]
+permissions:
+  contents: read
+jobs:
+  cache:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v3
+      - uses: actions/cache/restore@v5
+        id: cache
+        with:
+          path: .cache/synthetic
+          key: synthetic-linux-amd64-${{ hashFiles('infra-probe/Dockerfile', 'infra-probe/index.html') }}
+      - name: Build public synthetic layers on Linux
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: docker buildx build --platform linux/amd64 --cache-to type=local,dest=.cache/synthetic,mode=max infra-probe
+      - uses: actions/cache/save@v5
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          path: .cache/synthetic
+          key: synthetic-linux-amd64-${{ hashFiles('infra-probe/Dockerfile', 'infra-probe/index.html') }}
+  macos:
+    needs: cache
+    runs-on: macos-26-intel
+    timeout-minutes: 75
+    env:
+      PROBE_CACHE: ${{ github.workspace }}/.cache/synthetic
+      COMPOSE_BAKE: "false"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Install the previously verified public Docker tooling
+        run: bash connectivity/install-docker.sh
+      - name: Discover the VM bind address and Mac upstream address
+        run: python3 infra-probe/probe.py network
+      - uses: actions/cache/restore@v5
+        id: cache
+        with:
+          path: .cache/synthetic
+          key: synthetic-linux-amd64-${{ hashFiles('infra-probe/Dockerfile', 'infra-probe/index.html') }}
+          fail-on-cache-miss: true
+      - uses: docker/setup-buildx-action@v3
+      - name: Start synthetic Mac upstream
+        run: |
+          mkdir -p "$RUNNER_TEMP/synthetic-host"
+          echo HOST_OK > "$RUNNER_TEMP/synthetic-host/index.html"
+          python3 -m http.server 8765 --bind 0.0.0.0 --directory "$RUNNER_TEMP/synthetic-host" > "$RUNNER_TEMP/synthetic-host.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/synthetic-host.pid"
+      - name: Start Compose using Make and consume the Linux cache
+        run: |
+          set -o pipefail
+          test -s "$PROBE_CACHE/index.json"
+          make -C infra-probe docker.up 2>&1 | tee "$RUNNER_TEMP/compose-build.log"
+          python3 - <<'PY'
+          import os, pathlib, re
+          log = pathlib.Path(os.environ['RUNNER_TEMP'], 'compose-build.log').read_text()
+          step = re.search(r'#(\d+) .*RUN mkdir.*synthetic-layer', log)
+          assert step and re.search(r'#' + step[1] + r' CACHED\b', log), 'Synthetic build layer was not reused'
+          assert 'exporting cache to client directory' not in log, 'macOS unexpectedly exported a cache'
+          print('Linux synthetic layer reused on macOS without cache export.')
+          PY
+      - name: Export Caddy CA and forward HTTPS using Make
+        run: |
+          for attempt in $(seq 1 60); do
+            if make -C infra-probe caddy.download; then break; fi
+            if [ "$attempt" = 60 ]; then exit 1; fi
+            sleep 5
+          done
+          make -C infra-probe caddy.forward > "$RUNNER_TEMP/forward.log" 2>&1 &
+          forward_pid=$!
+          for attempt in $(seq 1 60); do
+            if ! kill -0 "$forward_pid" 2>/dev/null; then
+              wait "$forward_pid" || { cat "$RUNNER_TEMP/forward.log"; exit 1; }
+            fi
+            if curl --fail --silent --show-error --noproxy '*' --max-time 5 --cacert "$CADDY_CERTIFICATE_PATH" https://localhost/container | grep -q CONTAINER_OK; then break; fi
+            if [ "$attempt" = 60 ]; then exit 1; fi
+            sleep 5
+          done
+      - name: Verify trust, routing, DNS, and CA persistence
+        run: |
+          set -o pipefail
+          curl --fail --silent --show-error --noproxy '*' --max-time 30 --cacert "$CADDY_CERTIFICATE_PATH" https://localhost/host | grep -q HOST_OK
+          if curl --silent --show-error --noproxy '*' --max-time 30 https://localhost/container; then
+            echo 'Unexpected trust without installing the generated CA'; exit 1
+          else
+            test "$?" = 60
+          fi
+          dig +tcp +short @127.0.0.1 -p 1053 synthetic.test A | grep -qx 127.0.0.1
+          docker compose -f infra-probe/compose.yml run --rm --no-deps endpoint nslookup synthetic.test "$PROBE_VM_ADDRESS"
+          cp "$CADDY_CERTIFICATE_PATH" "$RUNNER_TEMP/caddy-before.crt"
+          make -C infra-probe caddy.restart
+          make -C infra-probe caddy.download
+          cmp "$RUNNER_TEMP/caddy-before.crt" "$CADDY_CERTIFICATE_PATH"
+          curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 3 --noproxy '*' --max-time 30 --cacert "$CADDY_CERTIFICATE_PATH" https://localhost/container | grep -q CONTAINER_OK
+      - name: Install generated CA in one existing simulator and verify Safari
+        run: python3 infra-probe/probe.py simulator
+      - name: Collect generic diagnostics
+        if: always()
+        run: |
+          docker compose -f infra-probe/compose.yml logs --no-color > "$RUNNER_TEMP/synthetic-compose.log" 2>&1 || true
+          docker ps -a || true
+          if [ -f "$RUNNER_TEMP/probe-result.json" ]; then cat "$RUNNER_TEMP/probe-result.json" >> "$GITHUB_STEP_SUMMARY"; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: synthetic-caddy-evidence
+          retention-days: 3
+          path: |
+            ${{ runner.temp }}/safari-https.png
+            ${{ runner.temp }}/probe-result.json
+            ${{ runner.temp }}/synthetic-compose.log
+            ${{ runner.temp }}/compose-build.log
+            ${{ runner.temp }}/forward.log
+      - name: Clean up only disposable probe resources
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/probe-simulator" ]; then xcrun simctl shutdown "$(cat "$RUNNER_TEMP/probe-simulator")" || true; fi
+          if [ -f "$RUNNER_TEMP/synthetic-host.pid" ]; then kill "$(cat "$RUNNER_TEMP/synthetic-host.pid")" || true; fi
+          if docker info >/dev/null 2>&1; then make -C infra-probe docker.down; fi

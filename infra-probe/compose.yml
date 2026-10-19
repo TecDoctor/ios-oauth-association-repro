@@ -1,0 +1,33 @@
+services:
+  endpoint:
+    build:
+      context: .
+      cache_from:
+        - type=local,src=${PROBE_CACHE}
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:8080/]
+      interval: 3s
+      timeout: 5s
+      retries: 60
+  caddy:
+    image: caddy:2.10.2-alpine
+    depends_on:
+      endpoint:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:443:443"
+    extra_hosts:
+      host.docker.internal: ${PROBE_MAC_ADDRESS}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+  dns:
+    image: coredns/coredns:1.12.0
+    command: [-conf, /Corefile]
+    ports:
+      - "${PROBE_VM_ADDRESS}:53:1053/tcp"
+      - "${PROBE_VM_ADDRESS}:53:1053/udp"
+    volumes:
+      - ./Corefile:/Corefile:ro
+volumes:
+  caddy-data:

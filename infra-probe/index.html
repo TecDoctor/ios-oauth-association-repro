@@ -1,0 +1,21 @@
+<!doctype html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Synthetic HTTPS probe</title>
+<h1>Caddy HTTPS accepted</h1>
+<p id="result">Checking container and host routes...</p>
+<script>
+  Promise.all([
+    fetch("/container").then((r) => r.text()),
+    fetch("/host").then((r) => r.text()),
+  ])
+    .then(async ([container, host]) => {
+      if (!container.includes("CONTAINER_OK") || !host.includes("HOST_OK"))
+        throw Error("route mismatch");
+      document.querySelector("#result").textContent =
+        "HTTPS + container + host routing passed";
+      await fetch("/browser-proof" + location.search);
+    })
+    .catch((e) => {
+      document.querySelector("#result").textContent = "FAILED: " + e.message;
+    });
+</script>
