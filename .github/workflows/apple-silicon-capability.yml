@@ -1,0 +1,35 @@
+name: Apple Silicon Docker virtualization capability
+on:
+  push:
+    branches: [codex/HEP-3370-caddy-infra]
+    paths: [.github/workflows/apple-silicon-capability.yml]
+permissions:
+  contents: read
+jobs:
+  capability:
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - name: Check native virtualization support before installing Docker
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          uname -m
+          sw_vers
+          sysctl -n machdep.cpu.brand_string
+          sysctl kern.hv_support || true
+          cat > "$RUNNER_TEMP/capability.swift" <<'SWIFT'
+          import Foundation
+          import Virtualization
+          let supported = VZVirtualMachine.isSupported
+          let result = "Apple Silicon native Linux VM support: \(supported)"
+          print(result)
+          let summary = ProcessInfo.processInfo.environment["GITHUB_STEP_SUMMARY"]!
+          try (result + "\n").write(toFile: summary, atomically: true, encoding: .utf8)
+          if !supported {
+              print("Same-machine Docker performance comparison blocked: native virtualization is unavailable on this runner.")
+              exit(1)
+          }
+          SWIFT
+          swift "$RUNNER_TEMP/capability.swift"
