@@ -95,7 +95,7 @@ jobs:
             test "$?" = 60
           fi
           dig +tcp +short @127.0.0.1 -p 1053 synthetic.test A | grep -qx 127.0.0.1
-          docker compose -f infra-probe/compose.yml run --rm --no-deps endpoint nslookup synthetic.test "$PROBE_VM_ADDRESS"
+          docker compose -f infra-probe/compose.yml run --rm --no-deps endpoint dig +notcp +short "@$PROBE_VM_ADDRESS" -p 1053 synthetic.test A | grep -qx 127.0.0.1
           cp "$CADDY_CERTIFICATE_PATH" "$RUNNER_TEMP/caddy-before.crt"
           make -C infra-probe caddy.restart
           make -C infra-probe caddy.download
@@ -108,6 +108,7 @@ jobs:
         run: |
           docker compose -f infra-probe/compose.yml logs --no-color > "$RUNNER_TEMP/synthetic-compose.log" 2>&1 || true
           docker ps -a || true
+          colima ssh -- ss -lntup || true
           if [ -f "$RUNNER_TEMP/probe-result.json" ]; then cat "$RUNNER_TEMP/probe-result.json" >> "$GITHUB_STEP_SUMMARY"; fi
       - uses: actions/upload-artifact@v4
         if: always()
