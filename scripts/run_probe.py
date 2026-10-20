@@ -124,6 +124,41 @@ def verify_browser_in_same_process(udid, container):
         seal_evidence(udid, container)
 
 
+
+def native_readiness(udid):
+    config = json.loads(os.environ["PROBE_CONFIG_JSON"])
+    settings = ROOT / ".generated/native-targets.json"
+    settings.write_text(json.dumps({
+        "urls": [config["ISSUER_URL"].rstrip("/") + "/.well-known/openid-configuration",
+                 "https://" + config["CALLBACK_HOST"] + "/.well-known/apple-app-site-association"],
+        "identity": config["APP_TEAM_ID"] + "." + config["APP_BUNDLE_ID"],
+    }))
+    settings.chmod(0o600)
+    binary = BUILD / "native-readiness"
+    sdk = run(["xcrun", "--sdk", "iphonesimulator", "--show-sdk-path"]).decode().strip()
+    run(["xcrun", "swiftc", "-parse-as-library", "-target", "arm64-apple-ios17.4-simulator",
+         "-sdk", sdk, str(ROOT / "NativeCheck/Readiness.swift"), "-o", str(binary)])
+    run(["codesign", "--force", "--sign", "-", str(binary)])
+    deadline = time.monotonic() + 900
+    consecutive = 0
+    with (BUILD / "private-native-readiness.log").open("wb") as log:
+        while time.monotonic() < deadline:
+            try:
+                result = subprocess.run(["xcrun", "simctl", "spawn", udid, str(binary), str(settings)],
+                                        capture_output=True, timeout=min(90, max(1, deadline - time.monotonic())))
+                log.write(result.stdout + result.stderr)
+                consecutive = consecutive + 1 if result.returncode == 0 else 0
+            except subprocess.TimeoutExpired:
+                log.write(b'{"ready":false,"reason":"process_timeout"}\n')
+                consecutive = 0
+            log.flush()
+            if consecutive == 3:
+                print("Native iOS HTTPS and association identity passed before app installation.", flush=True)
+                return
+            time.sleep(min(5, max(0, deadline - time.monotonic())))
+    raise RuntimeError("Native simulator transport was not ready; app was not installed")
+
+
 def main():
     if os.environ.get("GITHUB_ACTIONS") != "true":
         raise SystemExit("This runner must only be used in disposable GitHub Actions VMs.")
@@ -152,6 +187,8 @@ def main():
     run(["xcrun", "simctl", "boot", udid])
     run(["xcrun", "simctl", "bootstatus", udid, "-b"])
     run(["xcrun", "simctl", "keychain", udid, "add-root-cert", os.environ["PROBE_CA_PATH"]])
+    print("phase: native-https-readiness", flush=True)
+    native_readiness(udid)
     print("phase: install", flush=True)
     run(["xcrun", "simctl", "install", udid, str(app)])
     bundle = json.loads(os.environ["PROBE_CONFIG_JSON"])["APP_BUNDLE_ID"]
