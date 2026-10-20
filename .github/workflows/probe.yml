@@ -54,6 +54,7 @@ jobs:
           path: |
             ${{ runner.temp }}/transport/results.json
             ${{ runner.temp }}/transport/server-mtu.txt
+            ${{ runner.temp }}/transport/server-links.txt
           retention-days: 1
       - name: Remove tunnel
         if: always()

@@ -13,7 +13,7 @@ if phase=='keys':
  run(['ssh-keygen','-q','-t','ed25519','-N','','-f',str(root/'ssh')])
  (root/'public.json').write_text(json.dumps({'wireguard':public,'ssh':(root/'ssh.pub').read_text().strip()}))
  (root/'known_hosts').write_text('10.77.0.1 '+config['ssh_host_key']+'\n')
- (root/'probe.conf').write_text('[Interface]\nPrivateKey = '+private+'\nAddress = 10.77.0.'+slot+'/32\n[Peer]\nPublicKey = '+config['wireguard_public_key']+'\nEndpoint = '+config['endpoint']+':51820\nAllowedIPs = 10.77.0.1/32\nPersistentKeepalive = 25\n')
+ (root/'probe.conf').write_text('[Interface]\nPrivateKey = '+private+'\nAddress = 10.77.0.'+slot+'/32\nMTU = 1280\n[Peer]\nPublicKey = '+config['wireguard_public_key']+'\nEndpoint = '+config['endpoint']+':51820\nAllowedIPs = 10.77.0.1/32\nPersistentKeepalive = 25\n')
  (root/'probe.conf').chmod(0o600)
 else:
  ssh=['ssh','-i',str(root/'ssh'),'-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+str(root/'known_hosts'),'-o','ConnectTimeout=10','-o','ServerAliveInterval=10','-o','ServerAliveCountMax=2']
@@ -39,10 +39,11 @@ else:
   (root/'results.json').write_text(json.dumps(results,indent=2))
   print(name, item.get('exit_code','timeout'), item['seconds'])
  check('ssh-small',ssh+['probe@10.77.0.1','printf ready'])
- check('ssh-large',ssh+['probe@10.77.0.1','cat /opt/probe/www/large.bin'])
+ check('ssh-large',ssh+['probe@10.77.0.1','head -c 1048576 /dev/zero'])
  check('ca-transfer',ssh+['probe@10.77.0.1','cat /home/probe/root.crt'],output=root/'root.crt')
  check('forward',ssh+['-N','-f','-M','-S',str(root/'socket'),'-o','ExitOnForwardFailure=yes','-L','127.0.0.1:8443:127.0.0.1:443','probe@10.77.0.1'])
  for path in ('health','large.bin'):
   check('tls-'+path,['curl','--fail','--silent','--show-error','--max-time','120','--cacert',str(root/'root.crt'),'--resolve','probe.test:8443:127.0.0.1','https://probe.test:8443/'+path],timeout=125)
+ check('server-links',ssh+['probe@10.77.0.1','ip -o link show'],output=root/'server-links.txt')
  check('server-mtu',ssh+['probe@10.77.0.1','cat /sys/class/net/wg0/mtu'],output=root/'server-mtu.txt')
  raise SystemExit(0 if all(x.get('exit_code')==0 for x in results['checks']) else 1)
