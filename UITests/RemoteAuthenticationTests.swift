@@ -39,8 +39,13 @@ final class RemoteAuthenticationTests: XCTestCase {
         while Date() < deadline {
             let frame = owner.frame
             if element.exists {
-                let middle = element.frame.midY
-                if element.isHittable && middle > frame.minY + frame.height * 0.25 && middle < frame.minY + frame.height * 0.75 { return }
+                let control = element.frame
+                let middle = control.midY
+                // Reserve Safari's top and bottom chrome, while allowing a fully
+                // visible control near the document end that cannot scroll farther.
+                let safeTop = frame.minY + frame.height * 0.20
+                let safeBottom = frame.minY + frame.height * 0.85
+                if element.isHittable && control.minY > safeTop && control.maxY < safeBottom { return }
                 let upward = middle >= frame.midY
                 let start = owner.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: upward ? 0.7 : 0.3))
                 let end = owner.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: upward ? 0.4 : 0.6))

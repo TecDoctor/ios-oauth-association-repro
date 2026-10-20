@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import ssl
 import subprocess
 import sys
 import time
@@ -73,6 +74,26 @@ def connect():
     time.sleep(2)
     if process.poll() is not None:
         raise RuntimeError("Loopback relay failed")
+    # A TCP accept alone does not prove TLS, host routing, or service readiness.
+    context = ssl.create_default_context(cafile=str(PRIVATE / "root.crt"))
+    issuer = config["probe"]["ISSUER_URL"].rstrip("/")
+    callback = config["probe"]["CALLBACK_HOST"]
+    urls = [issuer + "/.well-known/openid-configuration",
+            "https://" + callback + "/.well-known/apple-app-site-association"]
+    consecutive = 0
+    while consecutive < 3:
+        try:
+            for url in urls:
+                with urlopen(url, context=context, timeout=20) as response:
+                    if response.status != 200:
+                        raise OSError("Service not ready")
+                    json.loads(response.read())
+            consecutive += 1
+        except (OSError, ValueError):
+            consecutive = 0
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Trusted HTTPS readiness was not established")
+        time.sleep(5)
 
 
 if __name__ == "__main__":
