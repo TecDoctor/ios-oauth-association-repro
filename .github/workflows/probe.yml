@@ -1,75 +1,27 @@
-name: WireGuard connectivity proof
+name: Compose loaded-image policy proof
 on:
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  connect:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-22.04
-            slot: 2
-          - runner: xcode-27
-            slot: 3
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
+  image-policy:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
     steps:
-      - name: Install generic networking tools
+      - name: Verify loaded image is reused despite service pull policy
         shell: bash
         run: |
-          if [[ "$RUNNER_OS" == macOS ]]; then
-            brew install wireguard-tools
-          else
-            sudo apt-get update -qq
-            sudo apt-get install -y wireguard-tools
-          fi
-      - name: Generate disposable client keys
-        env:
-          PROBE: ${{ secrets.REMOTE_PROBE_JSON }}
-          SLOT: ${{ matrix.slot }}
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          import json, os, pathlib, subprocess
-          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'wgproof'
-          root.mkdir(mode=0o700)
-          config = json.loads(os.environ['PROBE'])
-          private = subprocess.check_output(['wg', 'genkey'], text=True).strip()
-          public = subprocess.check_output(['wg', 'pubkey'], input=private, text=True).strip()
-          subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(root/'ssh')], check=True)
-          (root/'public.json').write_text(json.dumps({'wireguard':public, 'ssh':(root/'ssh.pub').read_text().strip()}))
-          (root/'known_hosts').write_text('10.77.0.1 '+config['ssh_host_key']+'\n')
-          (root/'probe.conf').write_text('[Interface]\nPrivateKey = '+private+'\nAddress = 10.77.0.'+os.environ['SLOT']+'/32\n[Peer]\nPublicKey = '+config['wireguard_public_key']+'\nEndpoint = '+config['endpoint']+':51820\nAllowedIPs = 10.77.0.1/32\nPersistentKeepalive = 25\n')
-          (root/'probe.conf').chmod(0o600)
-          PY
-      - uses: actions/upload-artifact@v7
-        with:
-          name: public-peer-${{ matrix.slot }}
-          path: ${{ runner.temp }}/wgproof/public.json
-          retention-days: 1
-      - name: Activate tunnel and verify SSH and Docker readiness
-        shell: bash
-        run: |
-          sudo -n "$(command -v wg-quick)" up "$RUNNER_TEMP/wgproof/probe.conf"
-          python3 - <<'PY'
-          import os, pathlib, subprocess, time
-          root = pathlib.Path(os.environ['RUNNER_TEMP'])/'wgproof'
-          deadline=time.monotonic()+900
-          while time.monotonic()<deadline:
-            result=subprocess.run(['ssh','-i',str(root/'ssh'),'-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+str(root/'known_hosts'),'-o','ConnectTimeout=10','e2e@10.77.0.1','test -f /home/e2e/probe/ready && docker info >/dev/null'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=20)
-            if result.returncode==0:
-              print('WireGuard, pinned SSH identity, and remote Docker readiness verified.')
-              break
-            time.sleep(5)
-          else:
-            raise SystemExit('Connectivity readiness deadline exceeded')
-          PY
-      - name: Remove disposable tunnel
-        if: always()
-        shell: bash
-        run: |
-          if [[ -f "$RUNNER_TEMP/wgproof/probe.conf" ]]; then
-            sudo -n "$(command -v wg-quick)" down "$RUNNER_TEMP/wgproof/probe.conf"
-          fi
+          set -euo pipefail
+          docker pull alpine:3
+          docker tag alpine:3 local-only-policy-proof:run
+          mkdir -p "$RUNNER_TEMP/compose-proof"
+          cd "$RUNNER_TEMP/compose-proof"
+          cat > compose.yml <<'COMPOSE'
+          services:
+            proof:
+              image: local-only-policy-proof:run
+              pull_policy: always
+              command: ["sh", "-c", "echo loaded-image-policy-passed"]
+          COMPOSE
+          trap 'docker compose down' EXIT
+          docker compose up --pull missing --abort-on-container-exit --exit-code-from proof
