@@ -5,6 +5,7 @@ import json
 import secrets
 import os
 import plistlib
+import ssl
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 from urllib.request import urlopen
@@ -17,7 +18,7 @@ try:
         raise ValueError()
     if urlsplit(values["ISSUER_URL"]).scheme != "https" or not values["CALLBACK_PATH"].startswith("/"):
         raise ValueError()
-    with urlopen(values["ISSUER_URL"].rstrip("/") + "/.well-known/openid-configuration", timeout=120) as response:
+    with urlopen(values["ISSUER_URL"].rstrip("/") + "/.well-known/openid-configuration", timeout=120, context=ssl.create_default_context(cafile=os.environ.get("PROBE_CA_PATH"))) as response:
         discovery = json.load(response)
     endpoint = discovery["authorization_endpoint"]
     if urlsplit(endpoint).scheme != "https":
@@ -37,9 +38,20 @@ def plist(name, value):
     path.write_bytes(plistlib.dumps(value))
     path.chmod(0o600)
 plist("Runtime.plist", {"authorizationURL": values["AUTHORIZATION_URL"], "callbackHost": values["CALLBACK_HOST"], "callbackPath": values["CALLBACK_PATH"]})
-plist("Info.plist", {"CFBundleExecutable": "$(EXECUTABLE_NAME)", "CFBundleIdentifier": "$(PRODUCT_BUNDLE_IDENTIFIER)", "CFBundleName": "AssociationProbe", "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "1.0", "CFBundleVersion": "1", "UILaunchScreen": {}})
-plist("App.entitlements", {"application-identifier": values["APP_TEAM_ID"] + "." + values["APP_BUNDLE_ID"], "com.apple.developer.associated-domains": ["applinks:" + values["CALLBACK_HOST"], "webcredentials:" + values["CALLBACK_HOST"]]})
-project = {"name": "AssociationProbe", "targets": {"AssociationProbe": {"type": "application", "platform": "iOS", "deploymentTarget": "17.4", "sources": ["App", {"path": ".generated/Runtime.plist", "buildPhase": "resources"}], "settings": {"base": {"PRODUCT_BUNDLE_IDENTIFIER": values["APP_BUNDLE_ID"], "INFOPLIST_FILE": ".generated/Info.plist", "CODE_SIGN_ENTITLEMENTS": ".generated/App.entitlements", "CODE_SIGN_IDENTITY": "-", "CODE_SIGNING_ALLOWED": "YES", "CODE_SIGNING_REQUIRED": "NO", "ENTITLEMENTS_ALLOWED": "YES", "SWIFT_VERSION": "5.0", "TARGETED_DEVICE_FAMILY": "1,2"}}}}}
+plist("Info.plist", {"CFBundleExecutable": "$(EXECUTABLE_NAME)", "CFBundleIdentifier": "$(PRODUCT_BUNDLE_IDENTIFIER)", "CFBundleName": "AssociationProbe", "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "1.0", "CFBundleVersion": "1", "UILaunchScreen": {}, "UIApplicationSceneManifest": {"UIApplicationSupportsMultipleScenes": False}})
+plist("App.entitlements", {"application-identifier": values["APP_TEAM_ID"] + "." + values["APP_BUNDLE_ID"], "com.apple.developer.associated-domains": ["applinks:" + values["CALLBACK_HOST"] + values.get("DOMAIN_SUFFIX", ""), "webcredentials:" + values["CALLBACK_HOST"] + values.get("DOMAIN_SUFFIX", "")]})
+project = {"name": "AssociationProbe", "targets": {"AssociationProbe": {"type": "application", "platform": "iOS", "deploymentTarget": "17.4", "sources": ["App", {"path": ".generated/Runtime.plist", "buildPhase": "resources"}], "settings": {"base": {"PRODUCT_BUNDLE_IDENTIFIER": values["APP_BUNDLE_ID"], "INFOPLIST_FILE": ".generated/Info.plist", "CODE_SIGN_ENTITLEMENTS": ".generated/App.entitlements", "CODE_SIGN_IDENTITY": "-", "CODE_SIGNING_ALLOWED": "YES", "CODE_SIGNING_REQUIRED": "NO", "ENTITLEMENTS_ALLOWED": "YES", "ENABLE_DEBUG_DYLIB": "NO", "SWIFT_VERSION": "5.0", "TARGETED_DEVICE_FAMILY": "1,2"}}}}}
+project["targets"]["ProbeUITests"] = {
+    "type": "bundle.ui-testing", "platform": "iOS", "deploymentTarget": "17.4", "sources": ["UITests"],
+    "dependencies": [{"target": "AssociationProbe"}],
+    "settings": {"base": {"PRODUCT_BUNDLE_IDENTIFIER": values["APP_BUNDLE_ID"] + ".UITests",
+        "GENERATE_INFOPLIST_FILE": "YES", "CODE_SIGN_IDENTITY": "-", "SWIFT_VERSION": "5.0",
+        "TEST_TARGET_NAME": "AssociationProbe"}}
+}
+project["schemes"] = {"AssociationProbe": {
+    "build": {"targets": {"AssociationProbe": "all", "ProbeUITests": ["test"]}},
+    "test": {"targets": [{"name": "ProbeUITests"}], "gatherCoverageData": False}
+}}
 # Keep the spec at the repository root so its relative source paths resolve there.
 (root / ".generated-project.json").write_text(json.dumps(project))
 (root / ".generated-project.json").chmod(0o600)

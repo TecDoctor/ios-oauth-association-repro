@@ -69,3 +69,13 @@ Unencrypted builds, logs, and screenshots are never uploaded.
 `SANDBOX_CREDENTIALS_JSON` may be provisioned separately for later login/logout
 verification. This initial workflow does not reference or read it. SDK repository
 access secrets are also unused.
+
+## Temporary remote-cluster reproduction
+
+The `fruwe/HEP-3370-remote-probe` branch runs a generic UIKit OAuth callback test against a manually provisioned, short-lived cluster. It does not fetch or build private SDK, backend, or identity-provider source. A callback proves only browser/authentication-session behavior, not SDK token exchange or logout.
+
+`REMOTE_PROBE_JSON` is a repository secret containing the temporary address, public CA, disposable account and probe configuration. No cloud credential or shell access is provided to the runner. An operator restricts temporary TCP 8443 ingress to that job's IPv4 address, published as the `runner-address` artifact. The Mac forwards encrypted TLS bytes from loopback 443 and installs the public CA using `simctl keychain add-root-cert`, the same installation mechanism as the private owner Make task. The cluster retains its existing component-owned Make startup and seeding.
+
+The UI test captures the full screen and accessibility hierarchy after submission, then once per minute while waiting up to 1000 seconds for a callback. All screenshots, XCTest output and raw logs are encrypted to the existing diagnostic recipient before upload. Inspect them privately; never publish decrypted artifacts. Public output contains fixed phase/status messages only. The test creates and removes one owned hosted simulator; local simulators are untouched.
+
+The temporary firewall and host must be deleted when reproduction stops; the host also has a three-hour automatic deletion deadline. The initial public macOS availability check passed in run 39361605364 despite the private repository's organization budget block.

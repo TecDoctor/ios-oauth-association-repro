@@ -14,7 +14,14 @@ BUILD.mkdir(exist_ok=True)
 
 
 def run(args, timeout=1800, env=None):
-    result = subprocess.run(args, cwd=ROOT, capture_output=True, timeout=timeout, env=env)
+    try:
+        result = subprocess.run(args, cwd=ROOT, capture_output=True, timeout=timeout, env=env)
+    except subprocess.TimeoutExpired as error:
+        if args and args[0] == "xcodebuild":
+            (BUILD / "private-xcodebuild.log").write_bytes((error.stdout or b"") + (error.stderr or b""))
+        raise RuntimeError("Diagnostic subprocess exceeded its allowance; raw output withheld.") from None
+    if args and args[0] == "xcodebuild":
+        (BUILD / "private-xcodebuild.log").write_bytes(result.stdout + result.stderr)
     if result.returncode:
         # Arguments and output may include secret endpoints or identity.
         raise RuntimeError("Diagnostic subprocess failed; raw output withheld.")
@@ -42,16 +49,37 @@ def embedded_entitlements(binary):
     return None
 
 
-def seal_evidence(udid):
+def seal_evidence(udid, container):
+    # XCTest can reinstall the app and replace its data container.
+    try:
+        bundle = json.loads(os.environ["PROBE_CONFIG_JSON"])["APP_BUNDLE_ID"]
+        container = Path(run(["xcrun", "simctl", "get_app_container", udid, bundle, "data"]).decode().strip())
+    except Exception:
+        pass
     evidence = BUILD / "private-evidence"
     evidence.mkdir(exist_ok=True)
+    for build_log in BUILD.glob("private-*.log"):
+        shutil.copyfile(build_log, evidence / build_log.name)
+    result_bundle = BUILD / "BrowserResult.xcresult"
+    if result_bundle.exists():
+        try:
+            run(["xcrun", "xcresulttool", "export", "attachments", "--path", str(result_bundle),
+                 "--output-path", str(evidence / "test-attachments")], timeout=120)
+        except Exception:
+            pass
+    for name in ("probe-events.json", "private-error.json", "probe-timeline.json"):
+        if container is None:
+            continue
+        source = container / "Documents" / name
+        if source.exists():
+            shutil.copyfile(source, evidence / name)
     try:
         run(["xcrun", "simctl", "io", udid, "screenshot", str(evidence / "screen.png")], timeout=120)
     except Exception:
         pass
     try:
-        logs = run(["xcrun", "simctl", "spawn", udid, "log", "show", "--last", "20m", "--style", "ndjson",
-                    "--predicate", 'process == "swcd" OR subsystem CONTAINS "AuthenticationServices"'], timeout=120)
+        logs = run(["xcrun", "simctl", "spawn", udid, "log", "show", "--last", "60m", "--style", "ndjson", "--info", "--debug",
+                    "--predicate", 'process == "swcd" OR process == "AssociationProbe" OR subsystem CONTAINS "AuthenticationServices"'], timeout=120)
         (evidence / "association-service.log").write_bytes(logs)
     except Exception:
         pass
@@ -66,6 +94,36 @@ def seal_evidence(udid):
         shutil.rmtree(evidence)
 
 
+def verify_browser_in_same_process(udid, container):
+    try:
+        print("phase: browser-test-with-same-process-retry", flush=True)
+        config = json.loads(os.environ["REMOTE_PROBE_JSON"])
+        specifications = list((BUILD / "Build/Products").glob("*.xctestrun"))
+        if len(specifications) != 1:
+            raise RuntimeError("Expected one UI test specification")
+        specification = specifications[0]
+        data = plistlib.loads(specification.read_bytes())
+        def inject(node):
+            if isinstance(node, dict):
+                if "TestBundlePath" in node:
+                    node.setdefault("EnvironmentVariables", {}).update({
+                        "PROBE_APP_BUNDLE_ID": config["probe"]["APP_BUNDLE_ID"],
+                        "PROBE_USERNAME": config["username"], "PROBE_PASSWORD": config["password"]})
+                for value in node.values(): inject(value)
+            elif isinstance(node, list):
+                for value in node: inject(value)
+        inject(data)
+        specification.write_bytes(plistlib.dumps(data))
+        run(["xcodebuild", "test-without-building", "-xctestrun", str(specification),
+             "-destination", "id=" + udid, "-resultBundlePath", str(BUILD / "BrowserResult.xcresult"),
+             "-parallel-testing-enabled", "NO", "-maximum-concurrent-test-simulator-destinations", "1",
+             "-collect-test-diagnostics", "never",
+             "-only-testing:ProbeUITests/RemoteAuthenticationTests/testRemoteLoginCallback"], timeout=3000)
+        print("Generic OAuth callback passed; this does not verify SDK login/logout.", flush=True)
+    finally:
+        seal_evidence(udid, container)
+
+
 def main():
     if os.environ.get("GITHUB_ACTIONS") != "true":
         raise SystemExit("This runner must only be used in disposable GitHub Actions VMs.")
@@ -74,7 +132,7 @@ def main():
     print("phase: build", flush=True)
     run(["xcodebuild", "-project", "AssociationProbe.xcodeproj", "-scheme", "AssociationProbe",
          "-configuration", "Debug", "-sdk", "iphonesimulator", "-destination", "generic/platform=iOS Simulator",
-         "-derivedDataPath", str(BUILD), "ARCHS=arm64", "ONLY_ACTIVE_ARCH=YES", "-jobs", "2", "build"])
+         "-derivedDataPath", str(BUILD), "ARCHS=arm64", "ONLY_ACTIVE_ARCH=YES", "-jobs", "2", "build-for-testing"])
     app = BUILD / "Build/Products/Debug-iphonesimulator/AssociationProbe.app"
     expected = plistlib.loads((ROOT / ".generated/App.entitlements").read_bytes())
     actual = embedded_entitlements(app / "AssociationProbe")
@@ -90,42 +148,25 @@ def main():
     if not any(r.get("identifier") == runtime and r.get("isAvailable") for r in runtimes):
         raise RuntimeError("Required simulator runtime unavailable.")
     udid = run(["xcrun", "simctl", "create", "Association probe", "com.apple.CoreSimulator.SimDeviceType.iPhone-SE-3rd-generation", runtime]).decode().strip()
+    (BUILD / "owned-simulator.txt").write_text(udid)
     run(["xcrun", "simctl", "boot", udid])
     run(["xcrun", "simctl", "bootstatus", udid, "-b"])
+    run(["xcrun", "simctl", "keychain", udid, "add-root-cert", os.environ["PROBE_CA_PATH"]])
     print("phase: install", flush=True)
     run(["xcrun", "simctl", "install", udid, str(app)])
     bundle = json.loads(os.environ["PROBE_CONFIG_JSON"])["APP_BUNDLE_ID"]
-    environment = os.environ.copy()
-    environment["SIMCTL_CHILD_PROBE_AUTOSTART"] = "1"
-    print("phase: launch", flush=True)
-    run(["xcrun", "simctl", "launch", udid, bundle], env=environment)
     container = Path(run(["xcrun", "simctl", "get_app_container", udid, bundle, "data"]).decode().strip())
-    events_path = container / "Documents/probe-events.json"
-    allowed = {"handler", "configuration_failure", "callback_received", "association_failure", "other_session_failure", "empty_completion", "start_accepted", "start_rejected", "key_window_present", "key_window_missing"}
-    terminal = {"configuration_failure", "callback_received", "association_failure", "other_session_failure", "empty_completion", "start_rejected"}
-    start = time.monotonic()
-    seen = 0
-    while time.monotonic() - start < 1000:
-        if events_path.exists():
-            events = json.loads(events_path.read_text())
-            if not isinstance(events, list) or any(not isinstance(e, str) or e not in allowed for e in events):
-                raise RuntimeError("Unexpected diagnostic content; output withheld.")
-            for event in events[seen:]:
-                print(json.dumps({"event": event, "observed_after_seconds": round(time.monotonic() - start, 1)}), flush=True)
-            seen = len(events)
-            if terminal.intersection(events):
-                seal_evidence(udid)
-                raise SystemExit(0 if "callback_received" in events else 1)
-        time.sleep(2)
-    seal_evidence(udid)
-    print("INCONCLUSIVE: session did not complete; browser presentation is not verified.", flush=True)
-    raise SystemExit(2)
+    verify_browser_in_same_process(udid, container)
+
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception:
+        if not (BUILD / "diagnostics.enc").exists():
+            try: seal_evidence(None, None)
+            except Exception: pass
         # Do not expose subprocess output, URLs, identity, or file paths.
         print("Diagnostic infrastructure failed; private inspection is required.", flush=True)
         raise SystemExit(1)
