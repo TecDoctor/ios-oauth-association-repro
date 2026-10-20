@@ -30,6 +30,10 @@ try:
                   "code_challenge_method": "S256", "code_challenge": challenge}
     values["AUTHORIZATION_URL"] = endpoint + ("&" if "?" in endpoint else "?") + urlencode(parameters)
 except Exception:
+    import traceback
+    diagnostic = root / ".build"
+    diagnostic.mkdir(exist_ok=True)
+    (diagnostic / "private-configure.log").write_text(traceback.format_exc())
     raise SystemExit("Probe configuration or discovery failed; details withheld to protect endpoint configuration.")
 private = root / ".generated"
 private.mkdir(mode=0o700, exist_ok=True)

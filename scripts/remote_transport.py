@@ -29,9 +29,6 @@ def prepare():
     with urlopen("https://api.ipify.org", timeout=30) as response:
         address = str(ipaddress.IPv4Address(response.read().decode().strip()))
     (ROOT / "runner-ip.txt").write_text(address + "\n")
-    with open(os.environ["GITHUB_ENV"], "a") as output:
-        output.write("PROBE_CONFIG_JSON=" + json.dumps(config["probe"]) + "\n")
-        output.write("PROBE_CA_PATH=" + str(certificate) + "\n")
 
 
 async def serve(config, uid, gid):
@@ -46,7 +43,8 @@ async def serve(config, uid, gid):
                 finally:
                     destination.close()
             await asyncio.gather(pipe(reader, remote), pipe(upstream, writer), return_exceptions=True)
-        except Exception:
+        except Exception as error:
+            print(type(error).__name__, file=sys.stderr, flush=True)
             writer.close()
     server = await asyncio.start_server(handle, "127.0.0.1", 443)
     os.setgroups([])
@@ -67,8 +65,10 @@ def connect():
             if time.monotonic() >= deadline:
                 raise RuntimeError("Runner-specific network access was not ready") from None
             time.sleep(5)
-    process = subprocess.Popen(["sudo", "-n", sys.executable, __file__, "serve", str(os.getuid()), str(os.getgid())],
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    (ROOT / ".build").mkdir(exist_ok=True)
+    with (ROOT / ".build/private-relay.log").open("wb") as log:
+        process = subprocess.Popen(["sudo", "-n", sys.executable, __file__, "serve", str(os.getuid()), str(os.getgid())],
+                                   stdout=log, stderr=log, start_new_session=True)
     (PRIVATE / "relay.pid").write_text(str(process.pid))
     time.sleep(2)
     if process.poll() is not None:

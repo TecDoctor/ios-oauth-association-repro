@@ -36,9 +36,17 @@ jobs:
       - name: Run generic OAuth callback reproduction
         env:
           REMOTE_PROBE_JSON: ${{ secrets.REMOTE_PROBE_JSON }}
+        run: python3 scripts/run_remote.py
+      - name: Encrypt transport evidence when app preparation did not start
+        if: always()
         run: |
-          python3 scripts/configure.py
-          python3 scripts/run_probe.py
+          python3 - <<'PY'
+          import sys
+          sys.path.insert(0, 'scripts')
+          import run_probe as probe
+          if not (probe.BUILD / 'diagnostics.enc').exists():
+              probe.seal_evidence(None, None)
+          PY
       - name: Upload encrypted screenshots and diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
