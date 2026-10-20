@@ -1,0 +1,17 @@
+name: Public remote probe runner check
+on:
+  workflow_dispatch:
+  push:
+    branches: [fruwe/HEP-3370-remote-probe]
+permissions:
+  contents: read
+jobs:
+  runner-check:
+    runs-on: macos-26
+    timeout-minutes: 5
+    steps:
+      - name: Verify standard public macOS runner availability
+        run: |
+          uname -m
+          xcodebuild -version
+          echo 'No cluster, simulator, credentials, or private source used.'
