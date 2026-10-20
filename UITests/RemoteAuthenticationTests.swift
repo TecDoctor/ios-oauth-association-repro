@@ -8,6 +8,21 @@ final class RemoteAuthenticationTests: XCTestCase {
 
     private func consent() {
         for owner in [system, app!] {
+            // Credential submission can open an OS modal above the terms page.
+            // Do not persist disposable credentials in the simulator's password store.
+            let passwordAlert = owner.alerts.matching(NSPredicate(
+                format: "label CONTAINS[c] %@ OR label CONTAINS %@", "Save Password", "パスワードを保存"
+            )).firstMatch
+            if passwordAlert.exists {
+                for label in ["Not Now", "今はしない", "あとで"] {
+                    let decline = passwordAlert.buttons[label].firstMatch
+                    if decline.exists && decline.isHittable {
+                        evidence("Password-save prompt before dismissal")
+                        decline.tap()
+                        break
+                    }
+                }
+            }
             for label in ["Continue", "続ける", "Allow"] {
                 let button = owner.alerts.buttons[label].firstMatch
                 if button.exists && button.isHittable { button.tap() }
