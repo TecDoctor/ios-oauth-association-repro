@@ -69,3 +69,29 @@ Unencrypted builds, logs, and screenshots are never uploaded.
 `SANDBOX_CREDENTIALS_JSON` may be provisioned separately for later login/logout
 verification. This initial workflow does not reference or read it. SDK repository
 access secrets are also unused.
+
+## Generic transport diagnostic (HEP-3370)
+
+The `fruwe/HEP-3370-wireguard-proof` experiment branch contains only generic
+networking probes. `scripts/transport_server.sh` initializes a disposable Linux
+host with WireGuard, pinned SSH, and a public Caddy image serving synthetic files.
+It contains no application checkout, cloud credentials, or login account data.
+The probe workflow uses an encrypted `REMOTE_PROBE_JSON` secret for the temporary
+endpoint and public server identities. Runner private keys remain runner-local;
+only public peer registrations and bounded results are uploaded. Register the
+public keys through the host's `probe-peer-2`, `probe-peer-3`, and `probe-peer-4`
+metadata entries. Delete the VM, boot disk and temporary secret after testing.
+
+Evidence from three concurrent clients (two Ubuntu, one macOS):
+
+- Automatic client MTU: [run 39457742146](https://github.com/TecDoctor/ios-oauth-association-repro/actions/runs/39457742146)
+  reproduced stalled TLS connections despite successful small SSH commands.
+  The large-file SSH fixture separately failed file permissions and is not
+  usable as baseline evidence for throughput.
+- Explicit client MTU 1280: [run 39458335439](https://github.com/TecDoctor/ios-oauth-association-repro/actions/runs/39458335439)
+  passed every SSH and HTTPS check, including 1 MiB transfers, on all clients.
+  The SSH fixture was corrected to read synthetic bytes from `/dev/zero`.
+  Server interfaces reported physical MTU 1460 and WireGuard MTU 1420.
+
+These results support the client MTU correction for this networking path. They
+are not application login/logout acceptance or proof of overall CI stability.
