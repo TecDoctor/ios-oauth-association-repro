@@ -108,7 +108,21 @@ disposable runner with credential persistence disabled. That checkout and its
 outputs are never uploaded or committed here. Artifacts are explicitly limited
 to generic result JSON, interface metadata and the synthetic Safari screenshot.
 
-The owner-task experiment is pending access configuration; it has not passed.
+The owner-task experiment was executed after its access configuration was enabled.
 The macOS job uses the bundled iPhone 17 / iOS 27 simulator without downloading
 runtimes or building an application. Safari evidence must be visually inspected:
 a successful `openurl` command is not itself proof of certificate acceptance.
+
+
+Owner-task evidence:
+
+- [Run 39466725526](https://github.com/TecDoctor/ios-oauth-association-repro/actions/runs/39466725526)
+  passed the actual owner forwarding setup/removal and port-443 HTTPS on both
+  Ubuntu runners and macOS. Its first Safari screenshot still showed a loading
+  Start Page, so command success alone was not accepted as iOS page-load proof.
+- [Run 39468298923](https://github.com/TecDoctor/ios-oauth-association-repro/actions/runs/39468298923)
+  added a native iOS URLSession assertion: HTTP 200, exact `healthy` response and
+  no error, using normal certificate validation. Safari was then launched before
+  one navigation; its screenshot was visually inspected and rendered `healthy`
+  without a certificate warning. This is HTTPS infrastructure evidence, not
+  application login/logout acceptance. No private sample app was built.

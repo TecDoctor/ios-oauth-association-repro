@@ -2,9 +2,10 @@
 import json,os,pathlib,platform,shlex,subprocess,time
 root=pathlib.Path(os.environ['RUNNER_TEMP'])/'transport'
 results=[]
-def checked(name,args,timeout=120):
+def checked(name,args,timeout=120,public_output=None):
  start=time.monotonic()
  p=subprocess.run(args,capture_output=True,text=True,timeout=timeout)
+ if public_output is not None: public_output.write_text(p.stdout)
  results.append({'check':name,'exit_code':p.returncode,'seconds':round(time.monotonic()-start,3)})
  (root/'owner-results.json').write_text(json.dumps(results,indent=2))
  print(name, 'passed' if p.returncode==0 else 'failed',flush=True)
@@ -29,7 +30,7 @@ if platform.system()=='Darwin':
  checked('set disposable runner hosts',['sudo','sh','-c',"printf '\n127.0.0.1 probe.test\n' >> /etc/hosts"])
  sdk=checked('locate bundled simulator SDK',['xcrun','--sdk','iphonesimulator','--show-sdk-path']).strip()
  checked('compile generic native HTTPS probe',['xcrun','--sdk','iphonesimulator','swiftc','-sdk',sdk,'-target','arm64-apple-ios27.0-simulator','scripts/native_https.swift','-o',str(root/'native-https')],timeout=180)
- native=checked('assert native iOS HTTPS response',['xcrun','simctl','spawn',udid,str(root/'native-https')],timeout=210)
+ native=checked('assert native iOS HTTPS response',['xcrun','simctl','spawn',udid,str(root/'native-https')],timeout=210,public_output=root/'native-https.json')
  (root/'native-https.json').write_text(native)
  checked('launch Safari before single navigation',['xcrun','simctl','launch',udid,'com.apple.mobilesafari'],timeout=120)
  checked('open synthetic HTTPS in Safari',['xcrun','simctl','openurl',udid,'https://probe.test/health'])
