@@ -1,65 +1,22 @@
-name: Generic tunnel transport diagnostics
+name: Owner-task access preflight
 on:
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  transport:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-22.04
-            slot: 2
-          - runner: xcode-27
-            slot: 3
-          - runner: ubuntu-22.04
-            slot: 4
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
-    env:
-      SLOT: ${{ matrix.slot }}
+  access:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 3
     steps:
-      - uses: actions/checkout@v6
-      - name: Install WireGuard
-        shell: bash
-        run: |
-          if [[ "$RUNNER_OS" == macOS ]]; then
-            brew install wireguard-tools
-          else
-            sudo apt-get update -qq
-            sudo apt-get install -y wireguard-tools
-          fi
-      - name: Prepare disposable keys
+      - name: Check named read-only checkout configuration without exposing values
         env:
-          PHASE: keys
-          PROBE: ${{ secrets.REMOTE_PROBE_JSON }}
-        run: python3 scripts/transport_probe.py
-      - uses: actions/upload-artifact@v7
-        with:
-          name: transport-public-peer-${{ matrix.slot }}
-          path: ${{ runner.temp }}/transport/public.json
-          retention-days: 1
-      - name: Activate tunnel
-        shell: bash
-        run: sudo -n "$(command -v wg-quick)" up "$RUNNER_TEMP/transport/probe.conf"
-      - name: Execute transport checks once
-        env:
-          PHASE: test
-        run: python3 scripts/transport_probe.py
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: transport-results-${{ matrix.slot }}
-          path: |
-            ${{ runner.temp }}/transport/results.json
-            ${{ runner.temp }}/transport/server-mtu.txt
-            ${{ runner.temp }}/transport/server-links.txt
-          retention-days: 1
-      - name: Remove tunnel
-        if: always()
-        shell: bash
+          APP_ID: ${{ vars.HEALTH_PORTAL_KEYCLOAK_REPO_ACCESS_APP_CLIENT_ID }}
+          APP_KEY: ${{ secrets.HEALTH_PORTAL_KEYCLOAK_REPO_ACCESS_APP_PRIVATE_KEY }}
         run: |
-          if [[ -f "$RUNNER_TEMP/transport/probe.conf" ]]; then
-            sudo -n "$(command -v wg-quick)" down "$RUNNER_TEMP/transport/probe.conf"
-          fi
+          python3 - <<'PY'
+          import os
+          present={name:bool(os.environ.get(name)) for name in ('APP_ID','APP_KEY')}
+          print('Keycloak client ID available:',present['APP_ID'])
+          print('Keycloak private key available:',present['APP_KEY'])
+          raise SystemExit(0 if all(present.values()) else 1)
+          PY
