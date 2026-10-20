@@ -1,27 +1,64 @@
-name: Compose loaded-image policy proof
+name: Generic tunnel transport diagnostics
 on:
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  image-policy:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 10
+  transport:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            slot: 2
+          - runner: xcode-27
+            slot: 3
+          - runner: ubuntu-22.04
+            slot: 4
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    env:
+      SLOT: ${{ matrix.slot }}
     steps:
-      - name: Verify loaded image is reused despite service pull policy
+      - uses: actions/checkout@v6
+      - name: Install WireGuard
         shell: bash
         run: |
-          set -euo pipefail
-          docker pull alpine:3
-          docker tag alpine:3 local-only-policy-proof:run
-          mkdir -p "$RUNNER_TEMP/compose-proof"
-          cd "$RUNNER_TEMP/compose-proof"
-          cat > compose.yml <<'COMPOSE'
-          services:
-            proof:
-              image: local-only-policy-proof:run
-              pull_policy: always
-              command: ["sh", "-c", "echo loaded-image-policy-passed"]
-          COMPOSE
-          trap 'docker compose down' EXIT
-          docker compose up --pull missing --abort-on-container-exit --exit-code-from proof
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            brew install wireguard-tools
+          else
+            sudo apt-get update -qq
+            sudo apt-get install -y wireguard-tools
+          fi
+      - name: Prepare disposable keys
+        env:
+          PHASE: keys
+          PROBE: ${{ secrets.REMOTE_PROBE_JSON }}
+        run: python3 scripts/transport_probe.py
+      - uses: actions/upload-artifact@v7
+        with:
+          name: transport-public-peer-${{ matrix.slot }}
+          path: ${{ runner.temp }}/transport/public.json
+          retention-days: 1
+      - name: Activate tunnel
+        shell: bash
+        run: sudo -n "$(command -v wg-quick)" up "$RUNNER_TEMP/transport/probe.conf"
+      - name: Execute transport checks once
+        env:
+          PHASE: test
+        run: python3 scripts/transport_probe.py
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: transport-results-${{ matrix.slot }}
+          path: |
+            ${{ runner.temp }}/transport/results.json
+            ${{ runner.temp }}/transport/server-mtu.txt
+          retention-days: 1
+      - name: Remove tunnel
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f "$RUNNER_TEMP/transport/probe.conf" ]]; then
+            sudo -n "$(command -v wg-quick)" down "$RUNNER_TEMP/transport/probe.conf"
+          fi
