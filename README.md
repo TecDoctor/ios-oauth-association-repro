@@ -95,3 +95,20 @@ Evidence from three concurrent clients (two Ubuntu, one macOS):
 
 These results support the client MTU correction for this networking path. They
 are not application login/logout acceptance or proof of overall CI stability.
+
+### Owner-task follow-up
+
+The prepared `probe.yml` now additionally invokes the existing Keycloak Make
+owners for forwarding setup/removal, HTTPS forwarding, and macOS/iOS simulator
+CA trust. This requires the organization variable
+`HEALTH_PORTAL_KEYCLOAK_REPO_ACCESS_APP_CLIENT_ID` and secret
+`HEALTH_PORTAL_KEYCLOAK_REPO_ACCESS_APP_PRIVATE_KEY` to be available to this repo.
+A read-only App token checks out only the private Makefile and scripts on the
+disposable runner with credential persistence disabled. That checkout and its
+outputs are never uploaded or committed here. Artifacts are explicitly limited
+to generic result JSON, interface metadata and the synthetic Safari screenshot.
+
+The owner-task experiment is pending access configuration; it has not passed.
+The macOS job uses the bundled iPhone 17 / iOS 27 simulator without downloading
+runtimes or building an application. Safari evidence must be visually inspected:
+a successful `openurl` command is not itself proof of certificate acceptance.
