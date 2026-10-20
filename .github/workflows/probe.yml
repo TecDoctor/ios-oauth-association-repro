@@ -9,12 +9,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-22.04
-            slot: 2
           - runner: xcode-27
             slot: 3
-          - runner: ubuntu-22.04
-            slot: 4
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 35
     env:
@@ -78,6 +74,7 @@ jobs:
             ${{ runner.temp }}/transport/server-mtu.txt
             ${{ runner.temp }}/transport/server-links.txt
             ${{ runner.temp }}/transport/owner-results.json
+            ${{ runner.temp }}/transport/native-https.json
             ${{ runner.temp }}/transport/safari-https.png
           retention-days: 1
       - name: Remove owned redirect
