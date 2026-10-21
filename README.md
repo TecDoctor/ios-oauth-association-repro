@@ -3,11 +3,12 @@
 ## Current diagnostic branch
 
 On `fruwe/HEP-3370-wireguard-proof`, the manually dispatched `probe.yml`
-currently observes one native login tap in the SDK sample on `xcode-27`, using
-one bundled iPhone 17 / iOS 27 simulator. The temporary private checkout uses
-previously authorized read-only access; source stays on the disposable runner.
-Only encrypted evidence is uploaded. No GCP resources or account credentials
-are used, and the probe does not submit the login form.
+attempts one complete SDK sample login, logout and logout-persistence check on
+`xcode-27`, using one bundled iPhone 17 / iOS 27 simulator. Temporary private
+checkouts use previously authorized read-only access; source stays on the
+disposable runner. Credentials come from encrypted Actions secrets and all raw
+evidence is encrypted before upload. Sandbox uses no GCP resources; the optional
+Docker target connects to an already prepared remote cluster.
 
 The earlier original `InteractionProbe` remains available as source. Its public
 screenshots contain only synthetic UI and `example.com`. Its separate tap and
@@ -191,3 +192,18 @@ or failure; the external controller owns cluster expiry and secret removal.
 Offline transport checks: `python3 -m unittest discover -s scripts -p test_remote_sdk_client.py`.
 
 The Docker client wiring has offline checks; its complete hosted login/logout acceptance is still pending.
+
+## Latest complete sandbox evidence
+
+[Run 39626901541](https://github.com/TecDoctor/ios-oauth-association-repro/actions/runs/39626901541)
+passed the complete sandbox flow with the unchanged default SDK and standard
+signing settings in 12 minutes 12 seconds, including the app build. Authenticated
+and post-relaunch unauthenticated screenshots were inspected privately. OS
+association readiness took 22.156 seconds. Animation waits after the form submit
+and logout callback took 1.599 and 2.915 seconds respectively.
+
+Earlier trials failed during XCTest queries while the authentication browser was
+closing. The successful trial waits for animation completion before querying the
+next screen; all functional assertions remain required. This single pass does
+not establish stability or prove the underlying XCTest failure eliminated.
+Docker acceptance remains pending.
