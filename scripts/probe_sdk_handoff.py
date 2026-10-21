@@ -278,6 +278,11 @@ def main():
     text: 'Continue|続ける'
     optional: true
     retryTapIfNoChange: false
+# Avoid querying accessibility during Safari's dismissal transition.
+# This observes screen stability; it does not repeat logout or restart the driver.
+- waitForAnimationToEnd:
+    timeout: 60000
+- takeScreenshot: .build/private-evidence/after-logout-transition
 - scrollUntilVisible:
     element: '^未ログイン$'
     direction: UP
