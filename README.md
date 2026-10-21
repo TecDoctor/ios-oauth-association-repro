@@ -1,5 +1,29 @@
 # iOS HTTPS authentication association reproduction
 
+## Current diagnostic branch
+
+On `fruwe/HEP-3370-wireguard-proof`, the manually dispatched `probe.yml`
+currently runs the original generic `InteractionProbe` on `xcode-27`, using one
+bundled iPhone 17 / iOS 27 simulator per hosted job. It does not use private
+repositories, SDKs, credentials, GCP resources, or the configuration secrets below.
+The only browser URL is `https://example.com`.
+
+Each matrix case makes one button press after directional scrolling, records
+whether the handler ran and session start was accepted, and waits for Apple's
+Continue dialog. Tap and long-press are independent experiments on fresh runners,
+not retries of a failed authentication test. Public screenshots show only the
+synthetic fixture and example domain. No login or token exchange is performed.
+
+Evidence so far:
+
+- [Simple button fixture](https://github.com/TecDoctor/ios-oauth-association-repro/actions/runs/39533908402): both gestures activated the handler once.
+- [Inline navigation, tab bar, picker and full-width button](https://github.com/TecDoctor/ios-oauth-association-repro/actions/runs/39535476085): both gestures activated the handler once.
+- [Native browser handoff](https://github.com/TecDoctor/ios-oauth-association-repro/actions/runs/39536550060): both gestures activated the handler once and reached Apple’s Continue prompt. A generic pass does not establish private SDK behavior, domain association, credentials, or complete login/logout.
+
+The following sections describe the earlier HTTPS-association probe, which is
+retained as a separate diagnostic source and is not invoked by this branch's
+current workflow.
+
 A standalone UIKit app that starts Apple's ASWebAuthenticationSession with an
 HTTPS callback. Written independently for this reproduction; no private SDK,
 package dependency, or account credentials are required.
