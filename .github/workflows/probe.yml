@@ -1,35 +1,19 @@
-name: Hosted Maestro version timing
+name: Hosted process readiness proof
 on:
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  version:
+  process:
     runs-on: xcode-27
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        notification: [no-update-check]
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '21'
-      - name: Download public Maestro release
-        shell: bash
-        run: |
-          curl -fsSL https://github.com/mobile-dev-inc/Maestro/releases/download/cli-2.10.0/maestro.zip -o "$RUNNER_TEMP/maestro.zip"
-          echo "29b675e10cc12080e445e9bfb2e2b4e4dfb9c0f2e30d5884120d258b5e1cd991  $RUNNER_TEMP/maestro.zip" | shasum -a 256 -c -
-          unzip -q "$RUNNER_TEMP/maestro.zip" -d "$RUNNER_TEMP/maestro"
-      - name: Measure once with a booted hosted simulator
-        env:
-          PROBE_NOTIFICATION: ${{ matrix.notification }}
-        run: python3 scripts/probe_maestro_version.py
+      - name: Verify delayed child readiness and bounded process-group cleanup once
+        run: python3 scripts/probe_process_readiness.py
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: maestro-version-${{ matrix.notification }}
-          path: results/maestro-version.json
+          name: process-readiness
+          path: results/process-readiness.json
           retention-days: 7
