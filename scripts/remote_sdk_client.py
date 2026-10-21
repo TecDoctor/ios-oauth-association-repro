@@ -1,4 +1,5 @@
 """Disposable hosted-client transport using private owner Make targets, never cloud credentials."""
+from contextlib import nullcontext
 import ipaddress
 import json
 import os
@@ -34,14 +35,22 @@ def record_failure(args, code, stdout, stderr):
     (_DIAGNOSTICS / 'transport-failure.json').write_text(json.dumps(output))
 
 
-def checked(args, *, data=None, timeout=120):
+def checked(args, *, data=None, timeout=120, output_path=None):
     try:
-        result = subprocess.run(args, input=data, capture_output=True, text=True, timeout=timeout)
+        # A verbose daemon must inherit a private file, never our capture pipe.
+        with (output_path.open('w') if output_path else nullcontext()) as output:
+            options = {'stdout': output, 'stderr': subprocess.STDOUT} if output else {'capture_output': True}
+            result = subprocess.run(args, input=data, text=True, timeout=timeout, **options)
     except subprocess.TimeoutExpired as error:
         record_failure(args, 'timeout', error.stdout, error.stderr)
         raise RuntimeError('Client setup timed out; private command output withheld') from None
     if result.returncode:
-        record_failure(args, result.returncode, result.stdout, result.stderr)
+        detail = result.stderr
+        if output_path:
+            with output_path.open('rb') as stream:
+                stream.seek(max(0, output_path.stat().st_size - 32768))
+                detail = stream.read()
+        record_failure(args, result.returncode, result.stdout, detail)
         raise RuntimeError('Client setup failed; private command output withheld')
     return result.stdout
 
@@ -95,7 +104,8 @@ def connect(*, diagnostics=None):
     _DIAGNOSTICS = diagnostics
     path = root()
     config = json.loads((path / 'client.json').read_text())
-    checked(['sudo', '-n', shutil.which('wg-quick') or 'wg-quick', 'up', str(path / 'probe.conf')])
+    checked(['sudo', '-n', 'env', 'LOG_LEVEL=verbose', shutil.which('wg-quick') or 'wg-quick',
+             'up', str(path / 'probe.conf')], output_path=(_DIAGNOSTICS or path) / 'wireguard-startup.log')
     (path / 'tunnel-active').touch()
     ssh = ['ssh', '-F', str(path / 'ssh_config')]
     # The controller registers the published key during app compilation.

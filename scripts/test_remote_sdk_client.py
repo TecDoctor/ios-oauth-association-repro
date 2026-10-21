@@ -99,6 +99,15 @@ class RemoteClientTest(unittest.TestCase):
                         pass
                     process.communicate(timeout=5)
 
+    def test_daemon_output_uses_private_file_instead_of_capture_pipes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / 'daemon.log'
+            with mock.patch.object(client.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as run:
+                client.checked(['synthetic-daemon'], output_path=output)
+            self.assertNotIn('capture_output', run.call_args.kwargs)
+            self.assertEqual(run.call_args.kwargs['stderr'], subprocess.STDOUT)
+            self.assertEqual(run.call_args.kwargs['stdout'].name, str(output))
+
     def test_local_machine_is_rejected(self):
         with mock.patch.dict(os.environ, {}, clear=True), self.assertRaises(RuntimeError):
             client.root()
