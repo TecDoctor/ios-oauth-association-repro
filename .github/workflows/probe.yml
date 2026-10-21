@@ -1,92 +1,35 @@
-name: Owner forwarding and certificate proof
+name: Hosted Maestro version timing
 on:
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  transport:
+  version:
+    runs-on: xcode-27
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: xcode-27
-            slot: 3
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 35
-    env:
-      SLOT: ${{ matrix.slot }}
+        notification: [default, disabled]
     steps:
       - uses: actions/checkout@v6
-      - name: Generate scoped owner-task checkout token
-        id: owner-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+      - uses: actions/setup-java@v5
         with:
-          client-id: ${{ vars.HEALTH_PORTAL_KEYCLOAK_REPO_ACCESS_APP_CLIENT_ID }}
-          private-key: ${{ secrets.HEALTH_PORTAL_KEYCLOAK_REPO_ACCESS_APP_PRIVATE_KEY }}
-          owner: TecDoctor
-          repositories: health-portal-keycloak
-          permission-contents: read
-      - uses: actions/checkout@v6
-        with:
-          repository: TecDoctor/health-portal-keycloak
-          ref: fruwe/HEP-3370
-          token: ${{ steps.owner-token.outputs.token }}
-          persist-credentials: false
-          path: private-owner
-          sparse-checkout-cone-mode: false
-          sparse-checkout: |
-            /Makefile
-            /scripts/
-      - name: Install WireGuard
+          distribution: temurin
+          java-version: '21'
+      - name: Download public Maestro release
         shell: bash
         run: |
-          if [[ "$RUNNER_OS" == macOS ]]; then
-            brew install wireguard-tools
-          else
-            sudo apt-get update -qq
-            sudo apt-get install -y wireguard-tools
-          fi
-      - name: Prepare disposable keys
+          curl -fsSL https://github.com/mobile-dev-inc/Maestro/releases/download/cli-2.10.0/maestro.zip -o "$RUNNER_TEMP/maestro.zip"
+          echo "29b675e10cc12080e445e9bfb2e2b4e4dfb9c0f2e30d5884120d258b5e1cd991  $RUNNER_TEMP/maestro.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/maestro.zip" -d "$RUNNER_TEMP/maestro"
+      - name: Measure once with a booted hosted simulator
         env:
-          PHASE: keys
-          PROBE: ${{ secrets.REMOTE_PROBE_JSON }}
-        run: python3 scripts/transport_probe.py
-      - uses: actions/upload-artifact@v7
-        with:
-          name: transport-public-peer-${{ matrix.slot }}
-          path: ${{ runner.temp }}/transport/public.json
-          retention-days: 1
-      - name: Activate tunnel
-        shell: bash
-        run: sudo -n "$(command -v wg-quick)" up "$RUNNER_TEMP/transport/probe.conf"
-      - name: Execute transport checks once
-        env:
-          PHASE: test
-        run: python3 scripts/transport_probe.py
-      - name: Verify unchanged owner forwarding and certificate tasks
-        run: python3 scripts/owner_task_probe.py
+          PROBE_NOTIFICATION: ${{ matrix.notification }}
+        run: python3 scripts/probe_maestro_version.py
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: transport-results-${{ matrix.slot }}
-          path: |
-            ${{ runner.temp }}/transport/results.json
-            ${{ runner.temp }}/transport/server-mtu.txt
-            ${{ runner.temp }}/transport/server-links.txt
-            ${{ runner.temp }}/transport/owner-results.json
-            ${{ runner.temp }}/transport/native-https.json
-            ${{ runner.temp }}/transport/safari-https.png
-          retention-days: 1
-      - name: Remove owned redirect
-        if: always()
-        run: |
-          if [[ -f "$RUNNER_TEMP/transport/redirect-installed" ]]; then
-            make -s -C private-owner caddy.forward.remove
-          fi
-      - name: Remove tunnel
-        if: always()
-        shell: bash
-        run: |
-          if [[ -f "$RUNNER_TEMP/transport/probe.conf" ]]; then
-            sudo -n "$(command -v wg-quick)" down "$RUNNER_TEMP/transport/probe.conf"
-          fi
+          name: maestro-version-${{ matrix.notification }}
+          path: results/maestro-version.json
+          retention-days: 7
