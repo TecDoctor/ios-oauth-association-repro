@@ -1,34 +1,61 @@
-name: Hosted generic browser handoff proof
+name: Hosted SDK handoff observation
 on:
   workflow_dispatch:
+    inputs:
+      sdk-ref:
+        description: Optional diagnostic SDK branch (empty uses its latest default branch)
+        type: string
+        default: ''
 permissions:
   contents: read
+concurrency:
+  group: sdk-handoff-observation
+  cancel-in-progress: false
 jobs:
-  interaction:
+  probe:
+    if: github.repository == 'TecDoctor/ios-oauth-association-repro' && github.ref == 'refs/heads/fruwe/HEP-3370-wireguard-proof'
     runs-on: xcode-27
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        press: [tap]
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
+      - name: Create read-only SDK checkout token
+        id: sdk-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          client-id: ${{ secrets.HEALTH_PORTAL_SDK_REPO_ACCESS_APP_CLIENT_ID || vars.HEALTH_PORTAL_SDK_REPO_ACCESS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.HEALTH_PORTAL_SDK_REPO_ACCESS_APP_PRIVATE_KEY }}
+          owner: TecDoctor
+          repositories: health-portal-sdk-ios
+          permission-contents: read
+      - name: Temporary private SDK checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: TecDoctor/health-portal-sdk-ios
+          ref: ${{ inputs.sdk-ref }}
+          path: sdk-private
+          token: ${{ steps.sdk-token.outputs.token }}
+          persist-credentials: false
       - name: Download verified public Maestro
         run: |
           curl -fsSL https://github.com/mobile-dev-inc/Maestro/releases/download/cli-2.10.0/maestro.zip -o "$RUNNER_TEMP/maestro.zip"
           echo "29b675e10cc12080e445e9bfb2e2b4e4dfb9c0f2e30d5884120d258b5e1cd991  $RUNNER_TEMP/maestro.zip" | shasum -a 256 -c -
           unzip -q "$RUNNER_TEMP/maestro.zip" -d "$RUNNER_TEMP/maestro"
-      - name: Execute one press after directional centering
-        env:
-          PROBE_PRESS: ${{ matrix.press }}
-        run: python3 scripts/probe_interaction.py
-      - uses: actions/upload-artifact@v7
+      - name: Observe one login handler and discovery
+        run: python3 scripts/probe_sdk_handoff.py
+      - name: Upload encrypted evidence only
         if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: interaction-${{ matrix.press }}
-          path: results/
-          retention-days: 7
+          name: encrypted-sdk-handoff
+          path: .build/diagnostics.enc
+          if-no-files-found: ignore
+          retention-days: 3
+      - name: Remove temporary private material
+        if: always()
+        run: rm -rf -- sdk-private .build

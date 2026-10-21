@@ -150,3 +150,15 @@ Owner-task evidence:
   one navigation; its screenshot was visually inspected and rendered `healthy`
   without a certificate warning. This is HTTPS infrastructure evidence, not
   application login/logout acceptance. No private sample app was built.
+
+## Temporary SDK handoff observation
+
+The manually dispatched `probe.yml` on the diagnostic branch can temporarily
+check out the private SDK with the previously authorized read-only GitHub App.
+An empty SDK ref uses its latest default branch; an explicit diagnostic branch
+can expose bounded handler/discovery events. Source and build output remain on
+the disposable runner. Only an encrypted diagnostic archive is uploaded; raw
+screenshots, logs, SDK sources and configuration are never public artifacts.
+The probe makes one normal login tap on iPhone 17 / iOS 27 and observes browser
+presentation. It does not submit credentials or claim full login/logout success.
+No GCP resources or paid private-repository CI are used.
