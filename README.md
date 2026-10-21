@@ -207,3 +207,15 @@ closing. The successful trial waits for animation completion before querying the
 next screen; all functional assertions remain required. This single pass does
 not establish stability or prove the underlying XCTest failure eliminated.
 Docker acceptance remains pending.
+
+## Opt-in public driver investigation
+
+`safari-foreground-probe=true` rebuilds only Maestro's public XCTest runner from
+`cli-2.10.0` commit `14a408335e17a090df1e26bdbeaf80d8122a8fd8`.
+The experiment logs Safari's application state and skips its WebView query when
+Safari is not foreground. It replaces only the three bundled runner resources;
+the private SDK and the full login/logout assertions remain unchanged.
+This is an experimental tool build, not a released Maestro fix or an accepted
+main-E2E dependency. Its purpose is to test the observed background-Safari query
+failure without driver restarts, authentication retries, or shorter assertions.
+Upstream source: [ViewHierarchyHandler.swift](https://github.com/mobile-dev-inc/Maestro/blob/14a408335e17a090df1e26bdbeaf80d8122a8fd8/maestro-ios-xctest-runner/maestro-driver-iosUITests/Routes/Handlers/ViewHierarchyHandler.swift).

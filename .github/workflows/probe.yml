@@ -11,6 +11,10 @@ on:
         description: Optional diagnostic SDK branch (empty uses its latest default branch)
         type: string
         default: ''
+      safari-foreground-probe:
+        description: Experimental public Maestro runner that skips background Safari queries
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -90,6 +94,14 @@ jobs:
           curl -fsSL https://github.com/mobile-dev-inc/Maestro/releases/download/cli-2.10.0/maestro.zip -o "$RUNNER_TEMP/maestro.zip"
           echo "29b675e10cc12080e445e9bfb2e2b4e4dfb9c0f2e30d5884120d258b5e1cd991  $RUNNER_TEMP/maestro.zip" | shasum -a 256 -c -
           unzip -q "$RUNNER_TEMP/maestro.zip" -d "$RUNNER_TEMP/maestro"
+      - name: Build opt-in public Safari foreground probe
+        if: inputs.safari-foreground-probe
+        run: |
+          git clone --filter=blob:none --depth 1 --branch cli-2.10.0 https://github.com/mobile-dev-inc/Maestro.git "$RUNNER_TEMP/Maestro"
+          test "$(git -C "$RUNNER_TEMP/Maestro" rev-parse HEAD)" = 14a408335e17a090df1e26bdbeaf80d8122a8fd8
+          python3 scripts/patch_public_maestro.py patch "$RUNNER_TEMP/Maestro"
+          (cd "$RUNNER_TEMP/Maestro" && ARCHS=arm64 bash maestro-ios-xctest-runner/build-maestro-ios-runner.sh)
+          python3 scripts/patch_public_maestro.py package "$RUNNER_TEMP/Maestro" "$RUNNER_TEMP/maestro/maestro/lib/maestro-ios-driver.jar"
       - name: Verify one login and logout
         env:
           EXPECT_SDK_DIAGNOSTICS: ${{ inputs.sdk-ref == 'fruwe/HEP-3370-ui-diagnostics' && 'true' || 'false' }}
@@ -110,4 +122,4 @@ jobs:
         run: python3 scripts/remote_sdk_client.py cleanup
       - name: Remove temporary private material
         if: always()
-        run: rm -rf -- sdk-private private-owner .build
+        run: rm -rf -- sdk-private private-owner .build "$RUNNER_TEMP/Maestro"
