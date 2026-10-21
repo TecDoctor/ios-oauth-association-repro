@@ -158,6 +158,16 @@ An empty SDK ref uses its latest default branch; an explicit diagnostic branch
 can expose bounded handler/discovery events. Source and build output remain on
 the disposable runner. Only an encrypted diagnostic archive is uploaded; raw
 screenshots, logs, SDK sources and configuration are never public artifacts.
-The probe makes one normal login tap on iPhone 17 / iOS 27 and observes browser
-presentation. It does not submit credentials or claim full login/logout success.
+The current probe attempts one sandbox login, logout and logout-persistence check
+on iPhone 17 / iOS 27, using the authorized encrypted `SANDBOX_CREDENTIALS_JSON`
+secret. Credentials are bound through Maestro's documented `MAESTRO_` variables
+and checked before typing. The event-enabled diagnostic SDK branch is currently
+required for the additional one-handler/one-success assertions.
+
+Before authentication, the probe observes iOS's association records for up to
+1000 seconds and requires the exact application identity and every configured
+`webcredentials` domain to be approved. It never edits that database, grants an
+approval, retries authentication, or treats pending registration as success.
+Native terminal failures stop the observation and preserve encrypted evidence.
+A successful handoff alone is not full authentication acceptance.
 No GCP resources or paid private-repository CI are used.

@@ -38,6 +38,37 @@ def capture_association(udid, executable, name):
         return False
 
 
+def associations_approved(text, identity, domains):
+    approved = set()
+    for block in text.split('--------------------------------------------------------------------------------'):
+        fields = {}
+        for line in block.splitlines():
+            key, separator, value = line.partition(':')
+            if separator:
+                fields[key.strip()] = value.strip()
+        if (fields.get('Service') == 'webcredentials' and fields.get('App ID') == identity
+                and fields.get('Site/Fmwk Approval') == 'approved'):
+            approved.add(fields.get('Domain'))
+    return bool(domains) and set(domains) <= approved
+
+
+def wait_for_associations(udid, executable, identity, domains, timeout=1000):
+    if executable is None:
+        raise RuntimeError('Association readiness tool unavailable')
+    started = time.monotonic()
+    while time.monotonic() - started < timeout:
+        # Observe OS registration only. Never add, approve, reset, or retry authentication.
+        remaining = max(1, int(timeout - (time.monotonic() - started)))
+        state = run(['xcrun', 'simctl', 'spawn', udid, str(executable), 'show'],
+                    'association-readiness', timeout=min(30, remaining)).decode()
+        if associations_approved(state, identity, domains):
+            elapsed = round(time.monotonic() - started, 3)
+            print(json.dumps({'association_ready_seconds': elapsed}), flush=True)
+            return elapsed
+        time.sleep(min(5, max(0, timeout - (time.monotonic() - started))))
+    raise RuntimeError('OS association did not become approved before authentication')
+
+
 def observe_execution(child, events_path, timeout=3000):
     deadline = time.monotonic() + timeout
     seen = 0
@@ -156,6 +187,10 @@ def main():
     except (RuntimeError, subprocess.TimeoutExpired, KeyError, StopIteration, ValueError):
         pass
     association_before = capture_association(udid, association_tool, 'association-before-login')
+    run(['xcrun', 'simctl', 'launch', udid, bundle], 'launch-before-readiness', timeout=120)
+    domains = [value.removeprefix('webcredentials:') for value in
+               entitlements['com.apple.developer.associated-domains'] if value.startswith('webcredentials:')]
+    association_seconds = wait_for_associations(udid, association_tool, team + '.' + bundle, domains)
     container = Path(run(['xcrun', 'simctl', 'get_app_container', udid,
                           'sample.HealthPortalSDKSampleApp', 'data'], 'container').decode().strip())
     events_path = container / 'Library/Caches/e2e-oauth-events.json'
@@ -164,7 +199,6 @@ def main():
 ---
 - assertTrue: ${typeof MAESTRO_E2E_USERNAME === 'string' && MAESTRO_E2E_USERNAME.length > 0 && MAESTRO_E2E_USERNAME !== 'undefined'}
 - assertTrue: ${typeof MAESTRO_E2E_PASSWORD === 'string' && MAESTRO_E2E_PASSWORD.length > 0 && MAESTRO_E2E_PASSWORD !== 'undefined'}
-- launchApp
 - scrollUntilVisible:
     element:
       id: sample.oauth.login
@@ -287,7 +321,7 @@ def main():
     safe = [e['event'] for e in events if isinstance(e, dict) and e.get('event') in ALLOWED_EVENTS]
     accepted = (terminal_event is None and child.returncode == 0 and all(safe.count(event) == 1 for event in
                 ('login.handler', 'login.success', 'logout.handler', 'logout.success')))
-    report = {'terminal_event': terminal_event, 'association_capture_before': association_before, 'association_capture_after': association_after,
+    report = {'association_ready_seconds': association_seconds, 'terminal_event': terminal_event, 'association_capture_before': association_before, 'association_capture_after': association_after,
               'events': safe, 'handler_count': safe.count('login.handler'),
               'discovery_started': 'discovery.start' in safe,
               'discovery_completed': 'discovery.success' in safe,
