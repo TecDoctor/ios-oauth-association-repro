@@ -3,16 +3,15 @@
 ## Current diagnostic branch
 
 On `fruwe/HEP-3370-wireguard-proof`, the manually dispatched `probe.yml`
-currently runs the original generic `InteractionProbe` on `xcode-27`, using one
-bundled iPhone 17 / iOS 27 simulator per hosted job. It does not use private
-repositories, SDKs, credentials, GCP resources, or the configuration secrets below.
-The only browser URL is `https://example.com`.
+currently observes one native login tap in the SDK sample on `xcode-27`, using
+one bundled iPhone 17 / iOS 27 simulator. The temporary private checkout uses
+previously authorized read-only access; source stays on the disposable runner.
+Only encrypted evidence is uploaded. No GCP resources or account credentials
+are used, and the probe does not submit the login form.
 
-Each matrix case makes one button press after directional scrolling, records
-whether the handler ran and session start was accepted, and waits for Apple's
-Continue dialog. Tap and long-press are independent experiments on fresh runners,
-not retries of a failed authentication test. Public screenshots show only the
-synthetic fixture and example domain. No login or token exchange is performed.
+The earlier original `InteractionProbe` remains available as source. Its public
+screenshots contain only synthetic UI and `example.com`. Its separate tap and
+long-press experiments each made one press, without authentication retries.
 
 Evidence so far:
 
