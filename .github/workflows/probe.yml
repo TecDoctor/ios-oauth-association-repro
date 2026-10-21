@@ -1,19 +1,34 @@
-name: Hosted process readiness proof
+name: Hosted generic button interaction proof
 on:
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  process:
+  interaction:
     runs-on: xcode-27
-    timeout-minutes: 5
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        press: [tap, long-press]
     steps:
       - uses: actions/checkout@v6
-      - name: Verify delayed child readiness and bounded process-group cleanup once
-        run: python3 scripts/probe_process_readiness.py
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Download verified public Maestro
+        run: |
+          curl -fsSL https://github.com/mobile-dev-inc/Maestro/releases/download/cli-2.10.0/maestro.zip -o "$RUNNER_TEMP/maestro.zip"
+          echo "29b675e10cc12080e445e9bfb2e2b4e4dfb9c0f2e30d5884120d258b5e1cd991  $RUNNER_TEMP/maestro.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/maestro.zip" -d "$RUNNER_TEMP/maestro"
+      - name: Execute one press after directional centering
+        env:
+          PROBE_PRESS: ${{ matrix.press }}
+        run: python3 scripts/probe_interaction.py
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: process-readiness
-          path: results/process-readiness.json
+          name: interaction-${{ matrix.press }}
+          path: results/
           retention-days: 7
