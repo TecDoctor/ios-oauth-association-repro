@@ -12,6 +12,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / '.build'
 EVIDENCE = BUILD / 'private-evidence'
+RUNTIME_CONTEXT = {}
 ALLOWED_EVENTS = {'configured', 'login.handler', 'login.success', 'login.failure',
                   'discovery.start', 'discovery.success', 'discovery.failure',
                   'session.request', 'session.start', 'session.failure', 'session.callback',
@@ -172,6 +173,7 @@ def main():
     device = next(d for runtime, items in devices['devices'].items() if runtime.endswith('iOS-27-0')
                   for d in items if d['name'] == 'iPhone 17')
     udid = device['udid']
+    RUNTIME_CONTEXT['udid'] = udid
     if device['state'] != 'Booted':
         run(['xcrun', 'simctl', 'boot', udid], 'boot')
     run(['xcrun', 'simctl', 'bootstatus', udid, '-b'], 'bootstatus', timeout=900)
@@ -385,7 +387,16 @@ if __name__ == '__main__':
     status = 1
     try:
         status = main()
-    except Exception:
+    except Exception as error:
+        if EVIDENCE.exists():
+            (EVIDENCE / 'failure.json').write_text(json.dumps(
+                {'type': type(error).__name__, 'message': str(error)[:4096]}))
+            if RUNTIME_CONTEXT.get('udid'):
+                try:
+                    run(['xcrun', 'simctl', 'io', RUNTIME_CONTEXT['udid'], 'screenshot',
+                         str(EVIDENCE / 'failure.png')], 'failure-screenshot', timeout=30)
+                except Exception:
+                    pass
         print('Probe failed; private details withheld.', flush=True)
     finally:
         if EVIDENCE.exists():
