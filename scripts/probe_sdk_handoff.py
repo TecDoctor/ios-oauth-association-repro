@@ -259,6 +259,10 @@ def main():
 - tapOn:
     text: 'Log In|Sign In|ログイン'
     retryTapIfNoChange: false
+# The callback may dismiss Safari before the optional password-save query.
+- waitForAnimationToEnd:
+    timeout: 60000
+- takeScreenshot: .build/private-evidence/after-login-transition
 - tapOn:
     text: 'Not Now|今はしない'
     optional: true
