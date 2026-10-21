@@ -49,7 +49,8 @@ def associations_approved(text, identity, domains):
                 fields[key.strip()] = value.strip()
         if (fields.get('Service') == 'webcredentials' and fields.get('App ID') == identity
                 and fields.get('Site/Fmwk Approval') == 'approved'):
-            approved.add(fields.get('Domain'))
+            # The OS keeps this retrieval-mode suffix in its approved record.
+            approved.add(fields.get('Domain', '').removesuffix('?mode=developer'))
     return bool(domains) and set(domains) <= approved
 
 
