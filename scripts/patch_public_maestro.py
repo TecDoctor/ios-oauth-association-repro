@@ -6,6 +6,9 @@ import zipfile
 
 SOURCE_REVISION = '14a408335e17a090df1e26bdbeaf80d8122a8fd8'
 RELATIVE_SOURCE = 'maestro-ios-xctest-runner/maestro-driver-iosUITests/Routes/Handlers/ViewHierarchyHandler.swift'
+BUILD_SCRIPT = 'maestro-ios-xctest-runner/build-maestro-ios-runner.sh'
+OLD_BUILD = 'ARCHS="$ARCHS" ${DEVELOPMENT_TEAM_OPT}'
+NEW_BUILD = 'ARCHS="$ARCHS" IPHONEOS_DEPLOYMENT_TARGET=15.0 ${DEVELOPMENT_TEAM_OPT}'
 OLD = '''        let isRunning = safariWebService.state == .runningForeground || safariWebService.state == .runningBackground
         guard isRunning else {'''
 NEW = '''        let safariState = safariWebService.state
@@ -22,9 +25,13 @@ RESOURCES = (
 def patch(source):
     path = source / RELATIVE_SOURCE
     text = path.read_text()
-    if text.count(OLD) != 1:
-        raise ValueError('Expected pinned upstream Safari guard exactly once')
+    build = source / BUILD_SCRIPT
+    build_text = build.read_text()
+    if text.count(OLD) != 1 or build_text.count(OLD_BUILD) != 1:
+        raise ValueError('Expected pinned upstream guard and build invocation exactly once')
     path.write_text(text.replace(OLD, NEW))
+    # Xcode 27 no longer accepts the upstream driver's iOS 14 minimum.
+    build.write_text(build_text.replace(OLD_BUILD, NEW_BUILD))
 
 
 def package(source, jar):

@@ -14,8 +14,10 @@ class PublicDriverPatchTest(unittest.TestCase):
             source = root / patcher.RELATIVE_SOURCE
             source.parent.mkdir(parents=True)
             source.write_text(patcher.OLD)
+            (root / patcher.BUILD_SCRIPT).write_text(patcher.OLD_BUILD)
             patcher.patch(root)
             self.assertEqual(source.read_text(), patcher.NEW)
+            self.assertEqual((root / patcher.BUILD_SCRIPT).read_text(), patcher.NEW_BUILD)
             self.assertNotIn('.runningBackground', source.read_text())
             with self.assertRaises(ValueError):
                 patcher.patch(root)
