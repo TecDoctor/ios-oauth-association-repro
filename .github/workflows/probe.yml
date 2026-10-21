@@ -2,6 +2,11 @@ name: Hosted SDK handoff observation
 on:
   workflow_dispatch:
     inputs:
+      target:
+        description: Prepared environment for the single login/logout probe
+        type: choice
+        options: [sandbox, docker]
+        default: sandbox
       sdk-ref:
         description: Optional diagnostic SDK branch (empty uses its latest default branch)
         type: string
@@ -41,14 +46,56 @@ jobs:
           path: sdk-private
           token: ${{ steps.sdk-token.outputs.token }}
           persist-credentials: false
+      - name: Create read-only owner-task checkout token
+        if: inputs.target == 'docker'
+        id: owner-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          client-id: ${{ vars.HEALTH_PORTAL_KEYCLOAK_REPO_ACCESS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.HEALTH_PORTAL_KEYCLOAK_REPO_ACCESS_APP_PRIVATE_KEY }}
+          owner: TecDoctor
+          repositories: health-portal-keycloak
+          permission-contents: read
+      - name: Temporary owner-task checkout
+        if: inputs.target == 'docker'
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: TecDoctor/health-portal-keycloak
+          ref: fruwe/HEP-3370
+          token: ${{ steps.owner-token.outputs.token }}
+          persist-credentials: false
+          path: private-owner
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /Makefile
+            /scripts/
+      - name: Install client transport tools
+        if: inputs.target == 'docker'
+        run: brew install wireguard-tools
+      - name: Prepare disposable client keys
+        if: inputs.target == 'docker'
+        env:
+          REMOTE_PROBE_JSON: ${{ secrets.REMOTE_PROBE_JSON }}
+        run: python3 scripts/remote_sdk_client.py keys
+      - name: Publish public registration key only
+        if: inputs.target == 'docker'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sdk-client-public-peer
+          path: ${{ runner.temp }}/sdk-transport/public.json
+          if-no-files-found: error
+          retention-days: 1
       - name: Download verified public Maestro
         run: |
           curl -fsSL https://github.com/mobile-dev-inc/Maestro/releases/download/cli-2.10.0/maestro.zip -o "$RUNNER_TEMP/maestro.zip"
           echo "29b675e10cc12080e445e9bfb2e2b4e4dfb9c0f2e30d5884120d258b5e1cd991  $RUNNER_TEMP/maestro.zip" | shasum -a 256 -c -
           unzip -q "$RUNNER_TEMP/maestro.zip" -d "$RUNNER_TEMP/maestro"
-      - name: Verify one sandbox login and logout
+      - name: Verify one login and logout
         env:
-          SANDBOX_CREDENTIALS_JSON: ${{ secrets.SANDBOX_CREDENTIALS_JSON }}
+          EXPECT_SDK_DIAGNOSTICS: ${{ inputs.sdk-ref == 'fruwe/HEP-3370-ui-diagnostics' && 'true' || 'false' }}
+          PROBE_TARGET: ${{ inputs.target || 'sandbox' }}
+          SANDBOX_CREDENTIALS_JSON: ${{ inputs.target != 'docker' && secrets.SANDBOX_CREDENTIALS_JSON || '' }}
+          REMOTE_PROBE_JSON: ${{ inputs.target == 'docker' && secrets.REMOTE_PROBE_JSON || '' }}
         run: python3 scripts/probe_sdk_handoff.py
       - name: Upload encrypted evidence only
         if: always()
@@ -58,6 +105,9 @@ jobs:
           path: .build/diagnostics.enc
           if-no-files-found: ignore
           retention-days: 3
+      - name: Remove owned client transport
+        if: always() && inputs.target == 'docker'
+        run: python3 scripts/remote_sdk_client.py cleanup
       - name: Remove temporary private material
         if: always()
-        run: rm -rf -- sdk-private .build
+        run: rm -rf -- sdk-private private-owner .build

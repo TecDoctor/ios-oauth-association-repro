@@ -172,4 +172,21 @@ Before authentication, the probe observes iOS's association records for up to
 approval, retries authentication, or treats pending registration as success.
 Native terminal failures stop the observation and preserve encrypted evidence.
 A successful handoff alone is not full authentication acceptance.
-No GCP resources or paid private-repository CI are used.
+Sandbox trials use no GCP resources or paid private-repository CI.
+
+The optional Docker target connects only to an already prepared remote cluster;
+it never provisions a host or builds containers on macOS. An external controller
+must first verify cluster readiness and supply the authorized temporary encrypted
+`REMOTE_PROBE_JSON` secret with its endpoint, WireGuard public key, SSH host public
+key, public CA (`ca_pem`), domain list, HTTPS health URL, and disposable `account`
+(`E2E_USERNAME`/`E2E_PASSWORD`). Only generated public client keys are uploaded for
+registration in peer slot 6 during app compilation. No cloud credentials are
+available to the public workflow.
+
+A temporary read-only Keycloak checkout supplies the existing forwarding setup,
+forwarding, and macOS/iOS certificate-trust Make tasks. Their private source is
+never uploaded. The runner removes its owned forwarding and tunnel on completion
+or failure; the external controller owns cluster expiry and secret removal.
+Offline transport checks: `python3 -m unittest discover -s scripts -p test_remote_sdk_client.py`.
+
+The Docker client wiring has offline checks; its complete hosted login/logout acceptance is still pending.

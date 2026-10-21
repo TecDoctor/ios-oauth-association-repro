@@ -121,10 +121,17 @@ def main():
     if os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted':
         raise RuntimeError('Disposable hosted runner required')
     EVIDENCE.mkdir(parents=True, exist_ok=True)
-    credentials = json.loads(os.environ.pop('SANDBOX_CREDENTIALS_JSON'))
+    diagnostics_required = os.environ.pop('EXPECT_SDK_DIAGNOSTICS', 'false') == 'true'
+    target = os.environ.pop('PROBE_TARGET', 'sandbox')
+    if target not in {'sandbox', 'docker'}:
+        raise RuntimeError('Unsupported probe target')
+    sandbox = os.environ.pop('SANDBOX_CREDENTIALS_JSON', '')
+    remote = os.environ.pop('REMOTE_PROBE_JSON', '')
+    credentials = json.loads(sandbox) if target == 'sandbox' else json.loads(remote)['account']
+    configuration = 'Sandbox' if target == 'sandbox' else 'Local'
     if any(not isinstance(credentials.get(key), str) or not credentials[key]
            for key in ('E2E_USERNAME', 'E2E_PASSWORD')):
-        raise RuntimeError('Sandbox account configuration missing')
+        raise RuntimeError('Probe account configuration missing')
     sdk = ROOT / 'sdk-private'
     env = os.environ.copy()
     print('phase: private-model-generation', flush=True)
@@ -145,14 +152,14 @@ def main():
     if len(teams) != 1 or len(bundles) != 1:
         raise RuntimeError('Ambiguous project identity')
     team, bundle = next(iter(teams)), next(iter(bundles))
-    entitlements = plistlib.loads((sdk / 'Samples/SampleApp/SampleApp/SampleAppSandbox.entitlements').read_bytes())
+    entitlements = plistlib.loads((sdk / f'Samples/SampleApp/SampleApp/SampleApp{configuration}.entitlements').read_bytes())
     run(['xcodebuild', '-project', str(sdk / 'Samples/SampleApp/SampleApp.xcodeproj'),
-         '-scheme', 'Sandbox', '-configuration', 'Sandbox', '-sdk', 'iphonesimulator',
+         '-scheme', configuration, '-configuration', configuration, '-sdk', 'iphonesimulator',
          '-destination', 'generic/platform=iOS Simulator', '-derivedDataPath', str(derived),
          '-clonedSourcePackagesDirPath', str(BUILD / 'packages'),
          '-onlyUsePackageVersionsFromResolvedFile', 'ARCHS=arm64', 'ONLY_ACTIVE_ARCH=YES',
          'CODE_SIGN_IDENTITY=-', 'ENTITLEMENTS_ALLOWED=YES', '-jobs', '2', 'build'], 'build')
-    app = derived / 'Build/Products/Sandbox-iphonesimulator/SampleApp.app'
+    app = derived / f'Build/Products/{configuration}-iphonesimulator/SampleApp.app'
     from run_probe import embedded_entitlements
     actual = embedded_entitlements(app / 'SampleApp')
     (EVIDENCE / 'embedded-entitlements.plist').write_bytes(plistlib.dumps(actual or {}))
@@ -168,6 +175,9 @@ def main():
     if device['state'] != 'Booted':
         run(['xcrun', 'simctl', 'boot', udid], 'boot')
     run(['xcrun', 'simctl', 'bootstatus', udid, '-b'], 'bootstatus', timeout=900)
+    if target == 'docker':
+        from remote_sdk_client import connect
+        connect()
     run(['xcrun', 'simctl', 'install', udid, str(app)], 'install')
     association_tool = None
     try:
@@ -180,7 +190,7 @@ def main():
         pass
     association_before = capture_association(udid, association_tool, 'association-before-login')
     run(['xcrun', 'simctl', 'launch', udid, bundle], 'launch-before-readiness', timeout=120)
-    domains = [value.removeprefix('webcredentials:') for value in
+    domains = [value.removeprefix('webcredentials:').split('?', 1)[0] for value in
                entitlements['com.apple.developer.associated-domains'] if value.startswith('webcredentials:')]
     association_seconds = wait_for_associations(udid, association_tool, team + '.' + bundle, domains)
     container = Path(run(['xcrun', 'simctl', 'get_app_container', udid,
@@ -317,7 +327,8 @@ def main():
         shutil.copyfile(events_path, EVIDENCE / 'sdk-events.json')
     safe = [e['event'] for e in events if isinstance(e, dict) and e.get('event') in ALLOWED_EVENTS]
     instrumented = bool(events)
-    accepted = (terminal_event is None and child.returncode == 0 and (not instrumented or
+    accepted = (terminal_event is None and child.returncode == 0
+                and (not diagnostics_required or instrumented) and (not instrumented or
                 all(safe.count(event) == 1 for event in
                     ('login.handler', 'login.success', 'logout.handler', 'logout.success'))))
     report = {'association_ready_seconds': association_seconds, 'terminal_event': terminal_event, 'association_capture_before': association_before, 'association_capture_after': association_after,
