@@ -1,6 +1,8 @@
 """One SDK handoff observation; private checkout/output never becomes public artifacts."""
 import json
 import os
+import plistlib
+import re
 from pathlib import Path
 import shutil
 import signal
@@ -12,7 +14,7 @@ EVIDENCE = BUILD / 'private-evidence'
 ALLOWED_EVENTS = {'configured', 'login.handler', 'login.success', 'login.failure',
                   'discovery.start', 'discovery.success', 'discovery.failure',
                   'session.request', 'session.start', 'session.failure', 'session.callback',
-                  'presentation.anchor', 'logout.handler', 'logout.success', 'logout.failure'}
+                  'session.anchor', 'logout.handler', 'logout.success', 'logout.failure'}
 
 
 def run(args, name, *, cwd=ROOT, env=None, timeout=1800):
@@ -51,13 +53,38 @@ def main():
         cwd=sdk / 'health-portal-sdk/Scripts', env=env)
     print('phase: private-sdk-build', flush=True)
     derived = BUILD / 'sdk-build'
+    # Diagnostic build preserves the project's identity without editing private source.
+    project = sdk / 'Samples/SampleApp/SampleApp.xcodeproj/project.pbxproj'
+    project_text = project.read_text()
+    teams = set(re.findall(r'DEVELOPMENT_TEAM\s*=\s*([A-Z0-9]+);', project_text))
+    bundles = set(re.findall(r'PRODUCT_BUNDLE_IDENTIFIER\s*=\s*([A-Za-z0-9_.-]+);', project_text))
+    if len(teams) != 1 or len(bundles) != 1:
+        raise RuntimeError('Ambiguous project identity')
+    team, bundle = next(iter(teams)), next(iter(bundles))
+    entitlements = plistlib.loads((sdk / 'Samples/SampleApp/SampleApp/SampleAppSandbox.entitlements').read_bytes())
+    for key, value in {'application-identifier': team + '.' + bundle,
+                       'com.apple.developer.team-identifier': team}.items():
+        if key in entitlements and entitlements[key] != value:
+            raise RuntimeError('Conflicting project identity')
+        entitlements[key] = value
+    entitlement_path = EVIDENCE / 'build.entitlements'
+    entitlement_path.write_bytes(plistlib.dumps(entitlements))
     run(['xcodebuild', '-project', str(sdk / 'Samples/SampleApp/SampleApp.xcodeproj'),
          '-scheme', 'Sandbox', '-configuration', 'Sandbox', '-sdk', 'iphonesimulator',
          '-destination', 'generic/platform=iOS Simulator', '-derivedDataPath', str(derived),
          '-clonedSourcePackagesDirPath', str(BUILD / 'packages'),
          '-onlyUsePackageVersionsFromResolvedFile', 'ARCHS=arm64', 'ONLY_ACTIVE_ARCH=YES',
-         'CODE_SIGN_IDENTITY=-', 'ENTITLEMENTS_ALLOWED=YES', '-jobs', '2', 'build'], 'build')
+         'CODE_SIGN_IDENTITY=-', 'ENTITLEMENTS_ALLOWED=YES',
+         'CODE_SIGN_ENTITLEMENTS=' + str(entitlement_path), '-jobs', '2', 'build'], 'build')
     app = derived / 'Build/Products/Sandbox-iphonesimulator/SampleApp.app'
+    from run_probe import embedded_entitlements
+    actual = embedded_entitlements(app / 'SampleApp')
+    (EVIDENCE / 'embedded-entitlements.plist').write_bytes(plistlib.dumps(actual or {}))
+    if any((actual or {}).get(key) != entitlements[key] for key in
+           ('application-identifier', 'com.apple.developer.team-identifier',
+            'com.apple.developer.associated-domains')):
+        raise RuntimeError('Finished executable identity differs from requested identity')
+    run(['codesign', '-d', '--entitlements', ':-', str(app)], 'codesign-entitlements')
     devices = json.loads(run(['xcrun', 'simctl', 'list', 'devices', 'available', '--json'], 'devices'))
     device = next(d for runtime, items in devices['devices'].items() if runtime.endswith('iOS-27-0')
                   for d in items if d['name'] == 'iPhone 17')
