@@ -66,7 +66,7 @@ env.update(MAESTRO_CLI_NO_ANALYTICS='1',MAESTRO_DISABLE_UPDATE_CHECK='true',MAES
 binary=str(Path(os.environ['RUNNER_TEMP'])/'maestro/maestro/bin/maestro')
 start=time.monotonic()
 with (result/'maestro.log').open('w') as log:
-    child=subprocess.Popen([binary,'--device',udid,'test','--debug-output',str(result/'debug'),str(flow)],
+    child=subprocess.Popen([binary,'--device',udid,'test','--debug-output',str(result/'debug'),'--test-output-dir',str(result/'debug'),str(flow)],
                            env=env,stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True)
     try:
         child.wait(timeout=900)
