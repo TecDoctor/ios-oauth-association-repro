@@ -146,6 +146,9 @@ def main():
            for key in ('E2E_USERNAME', 'E2E_PASSWORD')):
         raise RuntimeError('Probe account configuration missing')
     sdk = ROOT / 'sdk-private'
+    sdk_revision = run(['git', 'rev-parse', 'HEAD'], 'sdk-revision', cwd=sdk, timeout=30).decode().strip()
+    if not re.fullmatch(r'[0-9a-f]{40}', sdk_revision):
+        raise RuntimeError('Invalid checked-out SDK revision')
     env = os.environ.copy()
     print('phase: private-model-generation', flush=True)
     generator = BUILD / 'generator'
@@ -384,7 +387,7 @@ def main():
                 and (not diagnostics_required or instrumented) and (not instrumented or
                 all(safe.count(event) == 1 for event in
                     ('login.handler', 'login.success', 'logout.handler', 'logout.success'))))
-    report = {'target': target, 'association_ready_seconds': association_seconds, 'terminal_event': terminal_event, 'association_capture_before': association_before, 'association_capture_after': association_after,
+    report = {'target': target, 'sdk_revision': sdk_revision, 'association_ready_seconds': association_seconds, 'terminal_event': terminal_event, 'association_capture_before': association_before, 'association_capture_after': association_after,
               'sdk_diagnostics_present': instrumented, 'events': safe,
               'handler_count': safe.count('login.handler') if instrumented else None,
               'discovery_started': 'discovery.start' in safe if instrumented else None,
