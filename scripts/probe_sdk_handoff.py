@@ -71,11 +71,22 @@ def wait_for_associations(udid, executable, identity, domains, timeout=1000):
     raise RuntimeError('OS association did not become approved before authentication')
 
 
+def record_host_load():
+    # Read-only host pressure evidence; no process arguments or credentials.
+    sample = {'time': time.time(), 'cpu_count': os.cpu_count(), 'load_average': os.getloadavg()}
+    with (EVIDENCE / 'host-load.jsonl').open('a') as output:
+        output.write(json.dumps(sample) + '\n')
+
+
 def observe_execution(child, events_path, timeout=3000):
     deadline = time.monotonic() + timeout
     seen = 0
     terminal = None
+    last_load_sample = 0.0
     while child.poll() is None and time.monotonic() < deadline:
+        if time.monotonic() - last_load_sample >= 10:
+            record_host_load()
+            last_load_sample = time.monotonic()
         try:
             events = json.loads(events_path.read_text()) if events_path.stat().st_size <= 65536 else []
         except (OSError, ValueError):
