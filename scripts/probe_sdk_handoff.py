@@ -41,6 +41,10 @@ def main():
     if os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted':
         raise RuntimeError('Disposable hosted runner required')
     EVIDENCE.mkdir(parents=True, exist_ok=True)
+    credentials = json.loads(os.environ.pop('SANDBOX_CREDENTIALS_JSON'))
+    if any(not isinstance(credentials.get(key), str) or not credentials[key]
+           for key in ('E2E_USERNAME', 'E2E_PASSWORD')):
+        raise RuntimeError('Sandbox account configuration missing')
     sdk = ROOT / 'sdk-private'
     env = os.environ.copy()
     print('phase: private-model-generation', flush=True)
@@ -93,6 +97,8 @@ def main():
         run(['xcrun', 'simctl', 'boot', udid], 'boot')
     run(['xcrun', 'simctl', 'bootstatus', udid, '-b'], 'bootstatus', timeout=900)
     run(['xcrun', 'simctl', 'install', udid, str(app)], 'install')
+    association_tool = '/System/Library/PrivateFrameworks/SharedWebCredentials.framework/Support/swcutil'
+    run(['xcrun', 'simctl', 'spawn', udid, association_tool, 'show'], 'association-before-login', timeout=120)
     flow = EVIDENCE / 'flow.yaml'
     flow.write_text('''appId: sample.HealthPortalSDKSampleApp
 ---
@@ -123,8 +129,75 @@ def main():
 - extendedWaitUntil:
     visible: 'Continue|続ける'
     timeout: 120000
+- tapOn:
+    text: 'Continue|続ける'
+    retryTapIfNoChange: false
+- extendedWaitUntil:
+    visible: 'Email input|Username or email input|Eメール入力欄|Eメール|メールアドレス入力欄'
+    timeout: 1000000
+- tapOn:
+    text: 'Email input|Username or email input|Eメール入力欄|Eメール|メールアドレス入力欄'
+    retryTapIfNoChange: false
+- eraseText
+- inputText: ${E2E_USERNAME}
+- tapOn:
+    text: 'Next|次へ'
+    retryTapIfNoChange: false
+- tapOn:
+    text: 'Password input|パスワード入力欄|パスワード'
+    retryTapIfNoChange: false
+- eraseText
+- inputText: ${E2E_PASSWORD}
+- tapOn:
+    text: 'Done|完了'
+    retryTapIfNoChange: false
+- scrollUntilVisible:
+    element: 'Log In|Sign In|ログイン'
+    direction: DOWN
+    timeout: 120000
+    visibilityPercentage: 100
+    centerElement: true
+- takeScreenshot: .build/private-evidence/before-web-submit
+- tapOn:
+    text: 'Log In|Sign In|ログイン'
+    retryTapIfNoChange: false
+- extendedWaitUntil:
+    visible:
+      id: sample.oauth.login
+    timeout: 1000000
+- scrollUntilVisible:
+    element: '^ログイン済み$'
+    direction: UP
+    timeout: 120000
+    visibilityPercentage: 100
+- assertVisible: '^ログイン済み$'
+- takeScreenshot: .build/private-evidence/authenticated
+- scrollUntilVisible:
+    element:
+      id: sample.oauth.logout
+    direction: DOWN
+    timeout: 120000
+    visibilityPercentage: 100
+    centerElement: true
+- tapOn:
+    id: sample.oauth.logout
+    retryTapIfNoChange: false
+- scrollUntilVisible:
+    element: '^未ログイン$'
+    direction: UP
+    timeout: 120000
+    visibilityPercentage: 100
+- assertVisible: '^未ログイン$'
+- assertNotVisible: '^ログイン済み$'
+- takeScreenshot: .build/private-evidence/logged-out
+- stopApp
+- launchApp
+- assertVisible: '^未ログイン$'
+- assertNotVisible: '^ログイン済み$'
+- takeScreenshot: .build/private-evidence/logout-persisted
 ''')
     clean_env = {k:v for k,v in env.items() if k in {'DEVELOPER_DIR','HOME','JAVA_HOME','LANG','LC_ALL','PATH','TMPDIR'}}
+    clean_env.update({key: credentials[key] for key in ('E2E_USERNAME', 'E2E_PASSWORD')})
     clean_env.update(MAESTRO_CLI_NO_ANALYTICS='1', MAESTRO_DISABLE_UPDATE_CHECK='true',
                      MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED='true')
     maestro = str(Path(os.environ['RUNNER_TEMP']) / 'maestro/maestro/bin/maestro')
@@ -137,6 +210,7 @@ def main():
             child.wait(timeout=1200)
         except subprocess.TimeoutExpired:
             os.killpg(child.pid, signal.SIGKILL); child.wait(timeout=15)
+    run(['xcrun', 'simctl', 'spawn', udid, association_tool, 'show'], 'association-after-login', timeout=120)
     run(['xcrun', 'simctl', 'io', udid, 'screenshot', str(EVIDENCE / 'final.png')], 'screenshot', timeout=120)
     container = Path(run(['xcrun', 'simctl', 'get_app_container', udid,
                           'sample.HealthPortalSDKSampleApp', 'data'], 'container').decode().strip())
@@ -147,13 +221,15 @@ def main():
     if events_path.exists():
         shutil.copyfile(events_path, EVIDENCE / 'sdk-events.json')
     safe = [e['event'] for e in events if isinstance(e, dict) and e.get('event') in ALLOWED_EVENTS]
+    accepted = (child.returncode == 0 and all(safe.count(event) == 1 for event in
+                ('login.handler', 'login.success', 'logout.handler', 'logout.success')))
     report = {'events': safe, 'handler_count': safe.count('login.handler'),
               'discovery_started': 'discovery.start' in safe,
               'discovery_completed': 'discovery.success' in safe,
-              'continue_assertion_passed': child.returncode == 0, 'maestro_exit': child.returncode}
+              'full_login_logout_passed': accepted, 'maestro_exit': child.returncode}
     print(json.dumps(report), flush=True)
     (EVIDENCE / 'summary.json').write_text(json.dumps(report))
-    return 0 if child.returncode == 0 else 1
+    return 0 if accepted else 1
 
 
 if __name__ == '__main__':
