@@ -1,4 +1,4 @@
-name: Hosted generic button interaction proof
+name: Hosted generic browser handoff proof
 on:
   workflow_dispatch:
 permissions:

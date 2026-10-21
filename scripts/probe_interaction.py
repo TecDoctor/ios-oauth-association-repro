@@ -59,7 +59,9 @@ flow.write_text('''appId: org.example.interactionprobe
 - takeScreenshot: results/before-press
 '''+press+'''
 - takeScreenshot: results/after-press
-- assertVisible: 'Handler count: 1'
+- extendedWaitUntil:
+    visible: 'Continue|続ける'
+    timeout: 120000
 ''')
 env={k:v for k,v in os.environ.items() if k in {'DEVELOPER_DIR','HOME','JAVA_HOME','LANG','LC_ALL','PATH','TMPDIR'}}
 env.update(MAESTRO_CLI_NO_ANALYTICS='1',MAESTRO_DISABLE_UPDATE_CHECK='true',MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED='true')
@@ -76,8 +78,9 @@ run(['xcrun','simctl','io',udid,'screenshot',str(result/'final.png')])
 container=Path(run(['xcrun','simctl','get_app_container',udid,'org.example.interactionprobe','data']))
 marker=container/'Documents/handler-count.txt'
 count=marker.read_text() if marker.exists() else '0'
-report={'press':mode,'handler_count':count,'exit_code':child.returncode,'elapsed_seconds':round(time.monotonic()-start,3)}
+accepted=(container/'Documents/session-start.txt').read_text() if (container/'Documents/session-start.txt').exists() else 'absent'
+report={'session_start_accepted':accepted,'press':mode,'handler_count':count,'exit_code':child.returncode,'elapsed_seconds':round(time.monotonic()-start,3)}
 (result/'interaction.json').write_text(json.dumps(report,indent=2)+'\n')
 print(json.dumps(report))
-if child.returncode or count!='1':
+if child.returncode or count!='1' or accepted!='true':
     raise SystemExit(1)
