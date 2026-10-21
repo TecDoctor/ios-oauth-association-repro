@@ -267,6 +267,41 @@ def main():
     text: 'Not Now|今はしない'
     optional: true
     retryTapIfNoChange: false
+# A newly created disposable account can require its first-use consent.
+- extendedWaitUntil:
+    visible: 'OAuthでログイン|.*利用規約への同意|.*同意して登録する.*|.*についての同意'
+    timeout: 1000000
+- runFlow:
+    when:
+      visible: '.*利用規約への同意|.*同意して登録する.*'
+    commands:
+      - scrollUntilVisible:
+          element: '個人情報の取扱いについて'
+          direction: DOWN
+          timeout: 450000
+          centerElement: true
+      - tapOn:
+          text: '.*同意して登録する'
+          enabled: true
+          retryTapIfNoChange: false
+      - waitForAnimationToEnd:
+          timeout: 60000
+# Each iteration accepts a different consent document, never repeats login.
+- repeat:
+    times: 5
+    while:
+      visible: '.*についての同意'
+    commands:
+      - scrollUntilVisible:
+          element: '^同意する$'
+          direction: DOWN
+          timeout: 120000
+      - tapOn:
+          text: '^同意する$'
+          enabled: true
+          retryTapIfNoChange: false
+      - waitForAnimationToEnd:
+          timeout: 60000
 - extendedWaitUntil:
     visible:
       id: sample.oauth.login

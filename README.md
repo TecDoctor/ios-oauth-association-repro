@@ -178,10 +178,11 @@ The optional Docker target connects only to an already prepared remote cluster;
 it never provisions a host or builds containers on macOS. An external controller
 must first verify cluster readiness and supply the authorized temporary encrypted
 `REMOTE_PROBE_JSON` secret with its endpoint, WireGuard public key, SSH host public
-key, public CA (`ca_pem`), domain list, HTTPS health URL, and disposable `account`
+key, optional public CA (`ca_pem`), domain list, HTTPS health URL, and disposable `account`
 (`E2E_USERNAME`/`E2E_PASSWORD`). Only generated public client keys are uploaded for
 registration in peer slot 6 during app compilation. No cloud credentials are
-available to the public workflow.
+available to the public workflow. If the CA is omitted, the client retrieves the
+owner-downloaded public certificate through the pinned SSH host identity.
 
 A temporary read-only Keycloak checkout supplies the existing forwarding setup,
 forwarding, and macOS/iOS certificate-trust Make tasks. Their private source is

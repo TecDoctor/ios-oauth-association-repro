@@ -39,8 +39,9 @@ def validated(config):
     health = urlparse(config['health_url'])
     if health.scheme != 'https' or health.hostname not in domains or health.username or health.password or health.port:
         raise ValueError('Health URL must use a configured HTTPS domain')
-    if not isinstance(config['ca_pem'], str) or not config['ca_pem'].startswith('-----BEGIN CERTIFICATE-----'):
-        raise ValueError('Public CA certificate required')
+    if 'ca_pem' in config and (not isinstance(config['ca_pem'], str)
+            or not config['ca_pem'].startswith('-----BEGIN CERTIFICATE-----')):
+        raise ValueError('Invalid public CA certificate')
     return endpoint, domains
 
 
@@ -53,8 +54,9 @@ def keys():
     checked(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(path / 'ssh')])
     (path / 'public.json').write_text(json.dumps({'wireguard': public, 'ssh': (path / 'ssh.pub').read_text().strip()}))
     (path / 'known_hosts').write_text('10.77.0.1 ' + config['ssh_host_key'] + '\n')
-    (path / 'root.crt').write_text(config['ca_pem'])
-    checked(['openssl', 'x509', '-in', str(path / 'root.crt'), '-noout'])
+    if 'ca_pem' in config:
+        (path / 'root.crt').write_text(config['ca_pem'])
+        checked(['openssl', 'x509', '-in', str(path / 'root.crt'), '-noout'])
     (path / 'client.json').write_text(json.dumps({'domains': domains, 'health_url': config['health_url']}))
     tunnel = path / 'probe.conf'
     tunnel.write_text('[Interface]\nPrivateKey = ' + private + '\nAddress = 10.77.0.6/32\nMTU = 1280\n'
@@ -76,6 +78,12 @@ def connect():
     # The controller registers the published key during app compilation.
     # Fail once if the prepared cluster is unavailable; never create it here.
     checked(ssh + ['sdk-cluster', 'true'], timeout=30)
+    if not (path / 'root.crt').exists():
+        # The cluster's owner task already downloaded this public CA.
+        # Retrieve it only through the pinned SSH host identity.
+        certificate = checked(ssh + ['sdk-cluster', 'cat /home/e2e/cluster/root.crt'], timeout=30)
+        (path / 'root.crt').write_text(certificate)
+        checked(['openssl', 'x509', '-in', str(path / 'root.crt'), '-noout'])
     owner = ['make', '-s', '-C', 'private-owner']
     checked(owner + ['caddy.forward.setup'])
     (path / 'redirect-installed').touch()

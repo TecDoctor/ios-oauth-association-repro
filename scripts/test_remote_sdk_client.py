@@ -22,6 +22,8 @@ class RemoteClientTest(unittest.TestCase):
 
     def test_rejects_invalid_transport_and_host_configuration(self):
         self.assertEqual(client.validated(self.config())[0], '192.0.2.1')
+        config = self.config();del config['ca_pem']
+        self.assertEqual(client.validated(config)[0], '192.0.2.1')
         for key, value in [('endpoint', 'invalid'), ('wireguard_public_key', 'bad'),
                            ('ssh_host_key', 'ssh-ed25519 bad\ninjection'),
                            ('domains', ['api.example.test\nmalicious']),
@@ -56,6 +58,7 @@ class RemoteClientTest(unittest.TestCase):
                 client.connect()
             commands = [call.args[0] for call in checked.call_args_list]
             self.assertTrue(all(command[0] not in {'docker', 'gcloud', 'xcodebuild'} for command in commands))
+            self.assertIn(['ssh', '-F', str(path / 'ssh_config'), 'sdk-cluster', 'cat /home/e2e/cluster/root.crt'], commands)
             for target in ('caddy.forward.setup', 'caddy.forward', 'caddy.trust.mac', 'caddy.trust.iossim'):
                 self.assertEqual(sum(target in c for c in commands), 1)
             self.assertEqual(sum(c[-1] == 'true' for c in commands), 1)
