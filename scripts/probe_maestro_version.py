@@ -10,7 +10,7 @@ if os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted':
     raise SystemExit('Only disposable hosted runners are allowed')
 output = Path('results/maestro-version.json')
 output.parent.mkdir(exist_ok=True)
-report = {'version_timeout_seconds': 180, 'notification': os.environ['PROBE_NOTIFICATION']}
+report = {'version_timeout_seconds': 240, 'notification': os.environ['PROBE_NOTIFICATION']}
 try:
     devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '--json'], text=True))
     candidates = [d for runtime, entries in devices['devices'].items() if runtime.endswith('iOS-27-0')
@@ -25,14 +25,16 @@ try:
     report['bootstatus_seconds'] = round(time.monotonic() - start, 3)
     env = {k: v for k, v in os.environ.items() if k in {'DEVELOPER_DIR', 'HOME', 'JAVA_HOME', 'LANG', 'LC_ALL', 'PATH', 'TMPDIR'}}
     env.update(MAESTRO_CLI_NO_ANALYTICS='1', MAESTRO_CLI_NO_UPDATE_NOTIFICATION='1')
-    if os.environ['PROBE_NOTIFICATION'] == 'disabled':
+    if os.environ['PROBE_NOTIFICATION'] != 'default':
         env['MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED'] = 'true'
+    if os.environ['PROBE_NOTIFICATION'] == 'no-update-check':
+        env['MAESTRO_DISABLE_UPDATE_CHECK'] = 'true'
     binary = str(Path(os.environ['RUNNER_TEMP']) / 'maestro/maestro/bin/maestro')
     start = time.monotonic()
     child = subprocess.Popen([binary, '--version'], env=env, stdin=subprocess.DEVNULL,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
     try:
-        stdout, stderr = child.communicate(timeout=180)
+        stdout, stderr = child.communicate(timeout=240)
     except subprocess.TimeoutExpired:
         os.killpg(child.pid, signal.SIGKILL)
         stdout, stderr = child.communicate(timeout=15)

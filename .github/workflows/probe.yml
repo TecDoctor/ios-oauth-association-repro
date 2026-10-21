@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        notification: [default, disabled]
+        notification: [no-update-check]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-java@v5
