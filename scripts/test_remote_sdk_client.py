@@ -1,6 +1,8 @@
 """Offline checks; never activate a tunnel or change the host."""
 import copy
 import json
+import signal
+import shlex
 import os
 from pathlib import Path
 import tempfile
@@ -71,6 +73,32 @@ class RemoteClientTest(unittest.TestCase):
             self.assertEqual(report['exit_code'], 'timeout')
             self.assertEqual(report['stdout_tail'], 'partial')
 
+    def test_background_forwarder_does_not_hold_make_capture_pipes(self):
+        # Synthetic launcher only: no SSH, tunnel, credentials, or simulator.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            launcher = root / 'launcher.py'
+            launcher.write_text("import subprocess,sys; subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])")
+            (root / 'Makefile').write_text('forward:\n\t@$(FORWARD) ignored-host\n')
+            base = shlex.join([sys.executable, str(launcher)])
+            for redirected in (False, True):
+                command = base + (' > ' + shlex.quote(str(root / 'forward.log')) + ' 2>&1' if redirected else '')
+                process = subprocess.Popen(['make', '-s', '-C', str(root), 'forward', 'FORWARD=' + command],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+                try:
+                    if redirected:
+                        self.assertEqual(process.communicate(timeout=2), ('', ''))
+                        self.assertEqual(process.returncode, 0)
+                    else:
+                        with self.assertRaises(subprocess.TimeoutExpired):
+                            process.communicate(timeout=0.3)
+                finally:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    process.communicate(timeout=5)
+
     def test_local_machine_is_rejected(self):
         with mock.patch.dict(os.environ, {}, clear=True), self.assertRaises(RuntimeError):
             client.root()
@@ -86,6 +114,9 @@ class RemoteClientTest(unittest.TestCase):
             commands = [call.args[0] for call in checked.call_args_list]
             self.assertTrue(all(command[0] not in {'docker', 'gcloud', 'xcodebuild'} for command in commands))
             self.assertIn(['ssh', '-F', str(path / 'ssh_config'), 'sdk-cluster', 'cat /home/e2e/cluster/root.crt'], commands)
+            forward = next(c for c in commands if 'caddy.forward' in c)
+            self.assertIn(' > ', forward[-1])
+            self.assertTrue(forward[-1].endswith(' 2>&1'))
             for target in ('caddy.forward.setup', 'caddy.forward', 'caddy.trust.mac', 'caddy.trust.iossim'):
                 self.assertEqual(sum(target in c for c in commands), 1)
             self.assertEqual(sum(c[-1] == 'true' for c in commands), 1)

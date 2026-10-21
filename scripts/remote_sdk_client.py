@@ -112,7 +112,11 @@ def connect(*, diagnostics=None):
     (path / 'redirect-installed').touch()
     forward = ssh + ['-N', '-f', '-M', '-S', str(path / 'socket'), '-o', 'ExitOnForwardFailure=yes',
                      '-L', '127.0.0.1:8443:127.0.0.1:443']
-    checked(owner + ['caddy.forward', 'CADDY_SSH_HOST=sdk-cluster', 'CADDY_FORWARD_COMMAND=' + shlex.join(forward)])
+    # ssh -f leaves its background child holding stdout/stderr. Give that child
+    # an owned file, so communicate() on make can finish when the launcher exits.
+    forward_log = (_DIAGNOSTICS or path) / 'ssh-forward.log'
+    command = shlex.join(forward) + ' > ' + shlex.quote(str(forward_log)) + ' 2>&1'
+    checked(owner + ['caddy.forward', 'CADDY_SSH_HOST=sdk-cluster', 'CADDY_FORWARD_COMMAND=' + command])
     checked(['sudo', 'tee', '-a', '/etc/hosts'], data='\n127.0.0.1 ' + ' '.join(config['domains']) + '\n')
     certificate = 'CADDY_CERTIFICATE_PATH=' + str(path / 'root.crt')
     checked(owner + ['-o', 'caddy.download', '-o', 'caddy.untrust.mac', 'caddy.trust.mac', certificate])
