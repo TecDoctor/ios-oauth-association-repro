@@ -177,7 +177,7 @@ def main():
     run(['xcrun', 'simctl', 'bootstatus', udid, '-b'], 'bootstatus', timeout=900)
     if target == 'docker':
         from remote_sdk_client import connect
-        connect()
+        connect(diagnostics=EVIDENCE)
     run(['xcrun', 'simctl', 'install', udid, str(app)], 'install')
     association_tool = None
     try:

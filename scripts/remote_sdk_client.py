@@ -9,6 +9,8 @@ import shutil
 import subprocess
 from urllib.parse import urlparse
 
+_DIAGNOSTICS = None
+
 
 def root():
     if os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted':
@@ -18,9 +20,28 @@ def root():
     return path
 
 
+def record_failure(args, code, stdout, stderr):
+    if _DIAGNOSTICS is None:
+        return
+    # Only connect() opts in; key generation must never enter evidence.
+    # The private-evidence owner seals this directory before upload.
+    def tail(value):
+        if isinstance(value, bytes):
+            value = value.decode(errors='replace')
+        return (value or '')[-32768:]
+    output = {'program': Path(args[0]).name, 'exit_code': code,
+              'stdout_tail': tail(stdout), 'stderr_tail': tail(stderr)}
+    (_DIAGNOSTICS / 'transport-failure.json').write_text(json.dumps(output))
+
+
 def checked(args, *, data=None, timeout=120):
-    result = subprocess.run(args, input=data, capture_output=True, text=True, timeout=timeout)
+    try:
+        result = subprocess.run(args, input=data, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        record_failure(args, 'timeout', error.stdout, error.stderr)
+        raise RuntimeError('Client setup timed out; private command output withheld') from None
     if result.returncode:
+        record_failure(args, result.returncode, result.stdout, result.stderr)
         raise RuntimeError('Client setup failed; private command output withheld')
     return result.stdout
 
@@ -69,7 +90,9 @@ def keys():
     print('Disposable public peer prepared; register slot 6 while the app builds.', flush=True)
 
 
-def connect():
+def connect(*, diagnostics=None):
+    global _DIAGNOSTICS
+    _DIAGNOSTICS = diagnostics
     path = root()
     config = json.loads((path / 'client.json').read_text())
     checked(['sudo', '-n', shutil.which('wg-quick') or 'wg-quick', 'up', str(path / 'probe.conf')])

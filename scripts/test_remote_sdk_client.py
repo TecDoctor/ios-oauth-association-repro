@@ -44,6 +44,33 @@ class RemoteClientTest(unittest.TestCase):
             self.assertNotIn('private-endpoint-value', result.stdout + result.stderr)
             self.assertNotIn('Traceback', result.stderr)
 
+    def test_connection_failure_is_bounded_and_only_written_to_private_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = Path(tmp)
+            failed = subprocess.CompletedProcess(['ssh'], 1, 'x' * 40000, 'private-host-detail')
+            with mock.patch.object(client, '_DIAGNOSTICS', evidence), \
+                 mock.patch.object(client.subprocess, 'run', return_value=failed):
+                with self.assertRaisesRegex(RuntimeError, 'private command output withheld'):
+                    client.checked(['ssh', 'private-host'])
+            report = json.loads((evidence / 'transport-failure.json').read_text())
+            self.assertEqual(report['program'], 'ssh')
+            self.assertEqual(len(report['stdout_tail']), 32768)
+            self.assertNotIn('args', report)
+            self.assertEqual(report['stderr_tail'], 'private-host-detail')
+
+    def test_timeout_records_bytes_without_repeating_command(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = Path(tmp)
+            error = subprocess.TimeoutExpired(['ssh'], 30, output=b'partial', stderr=b'private detail')
+            with mock.patch.object(client, '_DIAGNOSTICS', evidence), \
+                 mock.patch.object(client.subprocess, 'run', side_effect=error) as run:
+                with self.assertRaisesRegex(RuntimeError, 'timed out'):
+                    client.checked(['ssh', 'private-host'])
+            run.assert_called_once()
+            report = json.loads((evidence / 'transport-failure.json').read_text())
+            self.assertEqual(report['exit_code'], 'timeout')
+            self.assertEqual(report['stdout_tail'], 'partial')
+
     def test_local_machine_is_rejected(self):
         with mock.patch.dict(os.environ, {}, clear=True), self.assertRaises(RuntimeError):
             client.root()
