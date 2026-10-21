@@ -331,11 +331,11 @@ def main():
                 and (not diagnostics_required or instrumented) and (not instrumented or
                 all(safe.count(event) == 1 for event in
                     ('login.handler', 'login.success', 'logout.handler', 'logout.success'))))
-    report = {'association_ready_seconds': association_seconds, 'terminal_event': terminal_event, 'association_capture_before': association_before, 'association_capture_after': association_after,
+    report = {'target': target, 'association_ready_seconds': association_seconds, 'terminal_event': terminal_event, 'association_capture_before': association_before, 'association_capture_after': association_after,
               'sdk_diagnostics_present': instrumented, 'events': safe,
               'handler_count': safe.count('login.handler') if instrumented else None,
-              'discovery_started': 'discovery.start' in safe,
-              'discovery_completed': 'discovery.success' in safe,
+              'discovery_started': 'discovery.start' in safe if instrumented else None,
+              'discovery_completed': 'discovery.success' in safe if instrumented else None,
               'full_login_logout_passed': accepted, 'maestro_exit': child.returncode}
     print(json.dumps(report), flush=True)
     (EVIDENCE / 'summary.json').write_text(json.dumps(report))
