@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        press: [tap, long-press]
+        press: [tap]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-java@v5

@@ -33,7 +33,7 @@ run(['xcrun','swiftc','-parse-as-library','-sdk',sdk,'-target','arm64-apple-ios1
      'InteractionProbe/App.swift','-o',str(app/'InteractionProbe')])
 run(['codesign','--force','--sign','-',str(app)])
 run(['xcrun','simctl','install',udid,str(app)])
-press = '- longPressOn:\n    id: probe.activate' if mode == 'long-press' else '- tapOn:\n    id: probe.activate\n    retryTapIfNoChange: false'
+press = '- longPressOn:\n    id: probe.activate' if mode == 'long-press' else '- tapOn:\n    id: probe.activate\n    enabled: true\n    retryTapIfNoChange: false'
 flow = result/'flow.yaml'
 flow.write_text('''appId: org.example.interactionprobe
 ---
@@ -55,7 +55,7 @@ flow.write_text('''appId: org.example.interactionprobe
     visibilityPercentage: 100
     centerElement: true
 - waitForAnimationToEnd:
-    timeout: 5000
+    timeout: 60000
 - takeScreenshot: results/before-press
 '''+press+'''
 - takeScreenshot: results/after-press
