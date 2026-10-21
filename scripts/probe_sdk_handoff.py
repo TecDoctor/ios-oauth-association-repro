@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / '.build'
@@ -35,6 +36,43 @@ def capture_association(udid, executable, name):
     except (RuntimeError, subprocess.TimeoutExpired):
         # Optional diagnostics must not prevent the one functional execution.
         return False
+
+
+def observe_execution(child, events_path, timeout=3000):
+    deadline = time.monotonic() + timeout
+    seen = 0
+    terminal = None
+    while child.poll() is None and time.monotonic() < deadline:
+        try:
+            events = json.loads(events_path.read_text()) if events_path.stat().st_size <= 65536 else []
+        except (OSError, ValueError):
+            events = []
+        if isinstance(events, list):
+            for item in events[seen:]:
+                event = item.get('event') if isinstance(item, dict) else None
+                if event in ALLOWED_EVENTS:
+                    print(json.dumps({'observed_event': event}), flush=True)
+                if event in {'login.failure', 'logout.failure'}:
+                    terminal = event
+            seen = max(seen, len(events))
+        if terminal:
+            break
+        time.sleep(2)
+    if child.poll() is None:
+        terminal = terminal or 'execution-timeout'
+        try:
+            os.killpg(child.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(child.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            child.wait(timeout=15)
+    return terminal
 
 
 def seal():
@@ -118,9 +156,14 @@ def main():
     except (RuntimeError, subprocess.TimeoutExpired, KeyError, StopIteration, ValueError):
         pass
     association_before = capture_association(udid, association_tool, 'association-before-login')
+    container = Path(run(['xcrun', 'simctl', 'get_app_container', udid,
+                          'sample.HealthPortalSDKSampleApp', 'data'], 'container').decode().strip())
+    events_path = container / 'Library/Caches/e2e-oauth-events.json'
     flow = EVIDENCE / 'flow.yaml'
     flow.write_text('''appId: sample.HealthPortalSDKSampleApp
 ---
+- assertTrue: ${typeof MAESTRO_E2E_USERNAME === 'string' && MAESTRO_E2E_USERNAME.length > 0 && MAESTRO_E2E_USERNAME !== 'undefined'}
+- assertTrue: ${typeof MAESTRO_E2E_PASSWORD === 'string' && MAESTRO_E2E_PASSWORD.length > 0 && MAESTRO_E2E_PASSWORD !== 'undefined'}
 - launchApp
 - scrollUntilVisible:
     element:
@@ -158,7 +201,7 @@ def main():
     text: 'Email input|Username or email input|Eメール入力欄|Eメール|メールアドレス入力欄'
     retryTapIfNoChange: false
 - eraseText
-- inputText: ${E2E_USERNAME}
+- inputText: ${MAESTRO_E2E_USERNAME}
 - tapOn:
     text: 'Next|次へ'
     retryTapIfNoChange: false
@@ -166,7 +209,7 @@ def main():
     text: 'Password input|パスワード入力欄|パスワード'
     retryTapIfNoChange: false
 - eraseText
-- inputText: ${E2E_PASSWORD}
+- inputText: ${MAESTRO_E2E_PASSWORD}
 - tapOn:
     text: 'Done|完了'
     retryTapIfNoChange: false
@@ -179,6 +222,10 @@ def main():
 - takeScreenshot: .build/private-evidence/before-web-submit
 - tapOn:
     text: 'Log In|Sign In|ログイン'
+    retryTapIfNoChange: false
+- tapOn:
+    text: 'Not Now|今はしない'
+    optional: true
     retryTapIfNoChange: false
 - extendedWaitUntil:
     visible:
@@ -201,6 +248,10 @@ def main():
 - tapOn:
     id: sample.oauth.logout
     retryTapIfNoChange: false
+- tapOn:
+    text: 'Continue|続ける'
+    optional: true
+    retryTapIfNoChange: false
 - scrollUntilVisible:
     element: '^未ログイン$'
     direction: UP
@@ -216,7 +267,7 @@ def main():
 - takeScreenshot: .build/private-evidence/logout-persisted
 ''')
     clean_env = {k:v for k,v in env.items() if k in {'DEVELOPER_DIR','HOME','JAVA_HOME','LANG','LC_ALL','PATH','TMPDIR'}}
-    clean_env.update({key: credentials[key] for key in ('E2E_USERNAME', 'E2E_PASSWORD')})
+    clean_env.update({'MAESTRO_' + key: credentials[key] for key in ('E2E_USERNAME', 'E2E_PASSWORD')})
     clean_env.update(MAESTRO_CLI_NO_ANALYTICS='1', MAESTRO_DISABLE_UPDATE_CHECK='true',
                      MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED='true')
     maestro = str(Path(os.environ['RUNNER_TEMP']) / 'maestro/maestro/bin/maestro')
@@ -225,24 +276,18 @@ def main():
         child = subprocess.Popen([maestro, '--device', udid, 'test', '--debug-output', str(EVIDENCE / 'debug'),
                                   '--test-output-dir', str(EVIDENCE / 'debug'), str(flow)],
                                  env=clean_env, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
-        try:
-            child.wait(timeout=1200)
-        except subprocess.TimeoutExpired:
-            os.killpg(child.pid, signal.SIGKILL); child.wait(timeout=15)
+        terminal_event = observe_execution(child, events_path)
     association_after = capture_association(udid, association_tool, 'association-after-login')
     run(['xcrun', 'simctl', 'io', udid, 'screenshot', str(EVIDENCE / 'final.png')], 'screenshot', timeout=120)
-    container = Path(run(['xcrun', 'simctl', 'get_app_container', udid,
-                          'sample.HealthPortalSDKSampleApp', 'data'], 'container').decode().strip())
-    events_path = container / 'Library/Caches/e2e-oauth-events.json'
     events = json.loads(events_path.read_text()) if events_path.exists() else []
     if not isinstance(events, list):
         raise RuntimeError('Unexpected diagnostic schema')
     if events_path.exists():
         shutil.copyfile(events_path, EVIDENCE / 'sdk-events.json')
     safe = [e['event'] for e in events if isinstance(e, dict) and e.get('event') in ALLOWED_EVENTS]
-    accepted = (child.returncode == 0 and all(safe.count(event) == 1 for event in
+    accepted = (terminal_event is None and child.returncode == 0 and all(safe.count(event) == 1 for event in
                 ('login.handler', 'login.success', 'logout.handler', 'logout.success')))
-    report = {'association_capture_before': association_before, 'association_capture_after': association_after,
+    report = {'terminal_event': terminal_event, 'association_capture_before': association_before, 'association_capture_after': association_after,
               'events': safe, 'handler_count': safe.count('login.handler'),
               'discovery_started': 'discovery.start' in safe,
               'discovery_completed': 'discovery.success' in safe,
