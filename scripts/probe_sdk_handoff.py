@@ -26,6 +26,17 @@ def run(args, name, *, cwd=ROOT, env=None, timeout=1800):
     return (EVIDENCE / (name + '.log')).read_bytes()
 
 
+def capture_association(udid, executable, name):
+    if executable is None:
+        return False
+    try:
+        run(['xcrun', 'simctl', 'spawn', udid, str(executable), 'show'], name, timeout=120)
+        return True
+    except (RuntimeError, subprocess.TimeoutExpired):
+        # Optional diagnostics must not prevent the one functional execution.
+        return False
+
+
 def seal():
     archive = shutil.make_archive(str(BUILD / 'private-diagnostics'), 'zip', EVIDENCE)
     try:
@@ -97,8 +108,16 @@ def main():
         run(['xcrun', 'simctl', 'boot', udid], 'boot')
     run(['xcrun', 'simctl', 'bootstatus', udid, '-b'], 'bootstatus', timeout=900)
     run(['xcrun', 'simctl', 'install', udid, str(app)], 'install')
-    association_tool = '/System/Library/PrivateFrameworks/SharedWebCredentials.framework/Support/swcutil'
-    run(['xcrun', 'simctl', 'spawn', udid, association_tool, 'show'], 'association-before-login', timeout=120)
+    association_tool = None
+    try:
+        runtimes = json.loads(run(['xcrun', 'simctl', 'list', 'runtimes', '--json'], 'runtimes'))
+        runtime = next(r for r in runtimes['runtimes'] if r['identifier'].endswith('iOS-27-0'))
+        candidate = Path(runtime['bundlePath']) / 'Contents/Resources/RuntimeRoot/System/Library/PrivateFrameworks/SharedWebCredentials.framework/Support/swcutil'
+        if candidate.is_file():
+            association_tool = candidate
+    except (RuntimeError, subprocess.TimeoutExpired, KeyError, StopIteration, ValueError):
+        pass
+    association_before = capture_association(udid, association_tool, 'association-before-login')
     flow = EVIDENCE / 'flow.yaml'
     flow.write_text('''appId: sample.HealthPortalSDKSampleApp
 ---
@@ -210,7 +229,7 @@ def main():
             child.wait(timeout=1200)
         except subprocess.TimeoutExpired:
             os.killpg(child.pid, signal.SIGKILL); child.wait(timeout=15)
-    run(['xcrun', 'simctl', 'spawn', udid, association_tool, 'show'], 'association-after-login', timeout=120)
+    association_after = capture_association(udid, association_tool, 'association-after-login')
     run(['xcrun', 'simctl', 'io', udid, 'screenshot', str(EVIDENCE / 'final.png')], 'screenshot', timeout=120)
     container = Path(run(['xcrun', 'simctl', 'get_app_container', udid,
                           'sample.HealthPortalSDKSampleApp', 'data'], 'container').decode().strip())
@@ -223,7 +242,8 @@ def main():
     safe = [e['event'] for e in events if isinstance(e, dict) and e.get('event') in ALLOWED_EVENTS]
     accepted = (child.returncode == 0 and all(safe.count(event) == 1 for event in
                 ('login.handler', 'login.success', 'logout.handler', 'logout.success')))
-    report = {'events': safe, 'handler_count': safe.count('login.handler'),
+    report = {'association_capture_before': association_before, 'association_capture_after': association_after,
+              'events': safe, 'handler_count': safe.count('login.handler'),
               'discovery_started': 'discovery.start' in safe,
               'discovery_completed': 'discovery.success' in safe,
               'full_login_logout_passed': accepted, 'maestro_exit': child.returncode}
