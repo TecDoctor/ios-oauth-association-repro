@@ -146,27 +146,19 @@ def main():
         raise RuntimeError('Ambiguous project identity')
     team, bundle = next(iter(teams)), next(iter(bundles))
     entitlements = plistlib.loads((sdk / 'Samples/SampleApp/SampleApp/SampleAppSandbox.entitlements').read_bytes())
-    for key, value in {'application-identifier': team + '.' + bundle,
-                       'com.apple.developer.team-identifier': team}.items():
-        if key in entitlements and entitlements[key] != value:
-            raise RuntimeError('Conflicting project identity')
-        entitlements[key] = value
-    entitlement_path = EVIDENCE / 'build.entitlements'
-    entitlement_path.write_bytes(plistlib.dumps(entitlements))
     run(['xcodebuild', '-project', str(sdk / 'Samples/SampleApp/SampleApp.xcodeproj'),
          '-scheme', 'Sandbox', '-configuration', 'Sandbox', '-sdk', 'iphonesimulator',
          '-destination', 'generic/platform=iOS Simulator', '-derivedDataPath', str(derived),
          '-clonedSourcePackagesDirPath', str(BUILD / 'packages'),
          '-onlyUsePackageVersionsFromResolvedFile', 'ARCHS=arm64', 'ONLY_ACTIVE_ARCH=YES',
-         'CODE_SIGN_IDENTITY=-', 'ENTITLEMENTS_ALLOWED=YES',
-         'CODE_SIGN_ENTITLEMENTS=' + str(entitlement_path), '-jobs', '2', 'build'], 'build')
+         'CODE_SIGN_IDENTITY=-', 'ENTITLEMENTS_ALLOWED=YES', '-jobs', '2', 'build'], 'build')
     app = derived / 'Build/Products/Sandbox-iphonesimulator/SampleApp.app'
     from run_probe import embedded_entitlements
     actual = embedded_entitlements(app / 'SampleApp')
     (EVIDENCE / 'embedded-entitlements.plist').write_bytes(plistlib.dumps(actual or {}))
-    if any((actual or {}).get(key) != entitlements[key] for key in
-           ('application-identifier', 'com.apple.developer.team-identifier',
-            'com.apple.developer.associated-domains')):
+    expected = {'application-identifier': team + '.' + bundle,
+                'com.apple.developer.associated-domains': entitlements['com.apple.developer.associated-domains']}
+    if any((actual or {}).get(key) != value for key, value in expected.items()):
         raise RuntimeError('Finished executable identity differs from requested identity')
     run(['codesign', '-d', '--entitlements', ':-', str(app)], 'codesign-entitlements')
     devices = json.loads(run(['xcrun', 'simctl', 'list', 'devices', 'available', '--json'], 'devices'))
@@ -319,10 +311,13 @@ def main():
     if events_path.exists():
         shutil.copyfile(events_path, EVIDENCE / 'sdk-events.json')
     safe = [e['event'] for e in events if isinstance(e, dict) and e.get('event') in ALLOWED_EVENTS]
-    accepted = (terminal_event is None and child.returncode == 0 and all(safe.count(event) == 1 for event in
-                ('login.handler', 'login.success', 'logout.handler', 'logout.success')))
+    instrumented = bool(events)
+    accepted = (terminal_event is None and child.returncode == 0 and (not instrumented or
+                all(safe.count(event) == 1 for event in
+                    ('login.handler', 'login.success', 'logout.handler', 'logout.success'))))
     report = {'association_ready_seconds': association_seconds, 'terminal_event': terminal_event, 'association_capture_before': association_before, 'association_capture_after': association_after,
-              'events': safe, 'handler_count': safe.count('login.handler'),
+              'sdk_diagnostics_present': instrumented, 'events': safe,
+              'handler_count': safe.count('login.handler') if instrumented else None,
               'discovery_started': 'discovery.start' in safe,
               'discovery_completed': 'discovery.success' in safe,
               'full_login_logout_passed': accepted, 'maestro_exit': child.returncode}

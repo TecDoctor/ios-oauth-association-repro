@@ -161,8 +161,10 @@ screenshots, logs, SDK sources and configuration are never public artifacts.
 The current probe attempts one sandbox login, logout and logout-persistence check
 on iPhone 17 / iOS 27, using the authorized encrypted `SANDBOX_CREDENTIALS_JSON`
 secret. Credentials are bound through Maestro's documented `MAESTRO_` variables
-and checked before typing. The event-enabled diagnostic SDK branch is currently
-required for the additional one-handler/one-success assertions.
+and checked before typing. The default SDK is tested unchanged. If an event-enabled diagnostic branch is
+selected, its additional one-handler/one-success assertions must also pass.
+Without that instrumentation, acceptance requires the complete single-execution
+UI flow, including logout persistence; missing instrumentation is reported explicitly.
 
 Before authentication, the probe observes iOS's association records for up to
 1000 seconds and requires the exact application identity and every configured
