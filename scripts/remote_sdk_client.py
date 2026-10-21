@@ -112,9 +112,14 @@ def cleanup():
 
 if __name__ == '__main__':
     import sys
-    if sys.argv[1:] == ['keys']:
-        keys()
-    elif sys.argv[1:] == ['cleanup']:
-        cleanup()
-    else:
-        raise SystemExit('Expected keys or cleanup')
+    try:
+        if sys.argv[1:] == ['keys']:
+            keys()
+        elif sys.argv[1:] == ['cleanup']:
+            cleanup()
+        else:
+            raise ValueError('Expected keys or cleanup')
+    except Exception:
+        # Configuration and subprocess exceptions may contain secret endpoint values.
+        print('Remote client operation failed; private details withheld.', file=sys.stderr)
+        raise SystemExit(1)

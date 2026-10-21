@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import subprocess
+import sys
 import unittest
 from unittest import mock
 
@@ -29,6 +31,16 @@ class RemoteClientTest(unittest.TestCase):
             with self.subTest(key=key, value=value), self.assertRaises(ValueError):
                 config = copy.deepcopy(self.config());config[key] = value
                 client.validated(config)
+
+    def test_cli_rejects_malformed_secret_without_printing_its_value(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self.config();config['endpoint'] = 'private-endpoint-value'
+            result = subprocess.run([sys.executable, str(Path(client.__file__)), 'keys'],
+                env={**os.environ, 'RUNNER_ENVIRONMENT': 'github-hosted', 'RUNNER_TEMP': tmp,
+                     'REMOTE_PROBE_JSON': json.dumps(config)}, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 1)
+            self.assertNotIn('private-endpoint-value', result.stdout + result.stderr)
+            self.assertNotIn('Traceback', result.stderr)
 
     def test_local_machine_is_rejected(self):
         with mock.patch.dict(os.environ, {}, clear=True), self.assertRaises(RuntimeError):
