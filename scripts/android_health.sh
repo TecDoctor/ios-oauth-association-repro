@@ -35,6 +35,11 @@ until [[ "$("$adb" -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null
 done
 "$adb" -s emulator-5554 shell pm list packages | sort > "$out/packages.txt"
 "$adb" -s emulator-5554 shell dumpsys package com.google.android.apps.wellbeing > "$out/wellbeing-package.txt"
+if [[ "${DISABLE_WELLBEING:-false}" == true ]]; then
+  "$adb" -s emulator-5554 shell pm disable-user --user 0 com.google.android.apps.wellbeing
+  "$adb" -s emulator-5554 shell pm list packages -d --user 0 > "$out/disabled-packages.txt"
+  grep -Fxq 'package:com.google.android.apps.wellbeing' "$out/disabled-packages.txt"
+fi
 "$adb" -s emulator-5554 shell am start -W -a android.settings.SETTINGS
 "$adb" -s emulator-5554 shell am start -W -n com.android.chrome/com.google.android.apps.chrome.Main
 # Observe once for three minutes; do not dismiss errors, relaunch apps, or retry tests.

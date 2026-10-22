@@ -11,6 +11,10 @@ on:
         description: Optional diagnostic SDK branch (empty uses its latest default branch)
         type: string
         default: ''
+      disable-wellbeing:
+        description: Exclude the ancillary usage monitor before stock Android observation
+        type: boolean
+        default: false
       logout-observation:
         description: Isolate native status observation before the logout confirmation
         type: choice
@@ -139,6 +143,8 @@ jobs:
         with:
           persist-credentials: false
       - name: Observe a disposable stock Android image
+        env:
+          DISABLE_WELLBEING: ${{ inputs.disable-wellbeing }}
         run: bash scripts/android_health.sh
       - name: Upload stock OS diagnostics
         if: always()
