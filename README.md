@@ -10,6 +10,25 @@ disposable runner. Credentials come from encrypted Actions secrets and all raw
 evidence is encrypted before upload. Sandbox uses no GCP resources; the optional
 Docker target connects to an already prepared remote cluster.
 
+Two optional diagnostic controls keep experimental results separate:
+
+- `logout-observation=status-first` observes the native status before handling
+  the logout confirmation; the default handles confirmation first. Both make
+  one login and one logout attempt. This comparison does not establish a cause
+  from a single success.
+- `target=android-health` runs an independent stock Android 35 image on Ubuntu,
+  opens Settings and Chrome once, and records a three-minute ANR observation.
+  It fetches no private application, uses no secrets, and creates no cloud
+  resources. `disable-wellbeing=true` tests disabling only the ancillary Digital
+  Wellbeing package before observation. It never dismisses an error dialog or
+  relaunches an application to recover a failure. Stock OS success is not
+  application E2E acceptance.
+
+Read-only iOS association observations use a 1000-second overall deadline;
+individual slow observations have up to 120 seconds within that same deadline.
+Authentication starts only after approval. Host load and observation outcomes
+are retained in encrypted diagnostics; load average is not CPU utilization.
+
 The earlier original `InteractionProbe` remains available as source. Its public
 screenshots contain only synthetic UI and `example.com`. Its separate tap and
 long-press experiments each made one press, without authentication retries.
