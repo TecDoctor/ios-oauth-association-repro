@@ -16,6 +16,8 @@ echo "1b1f78891abf8ec268264356e1365c25519e8379  $RUNNER_TEMP/emulator.zip" | sha
 unzip -q "$RUNNER_TEMP/emulator.zip" -d "$RUNNER_TEMP/android-health-tools"
 emulator="$RUNNER_TEMP/android-health-tools/emulator/emulator"
 adb="$sdk/platform-tools/adb"
+sudo apt-get update -qq
+sudo apt-get install -y libpulse0
 "$emulator" -version
 sudo chmod a+rw /dev/kvm
 printf 'no\n' | "$avdmanager" create avd -n stock-health -k "$image" -d pixel_3a
