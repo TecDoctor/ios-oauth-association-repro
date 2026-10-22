@@ -140,10 +140,31 @@ def seal():
         Path(archive).unlink(missing_ok=True)
 
 
+def observe_status_before_confirmation(flow):
+    marker = "- tapOn:\n    text: 'Continue|続ける'\n    optional: true\n    retryTapIfNoChange: false\n"
+    if flow.count(marker) != 1:
+        raise ValueError('Expected one public logout confirmation command')
+    # Independently vary this public probe's ordering, keeping both actions single-shot.
+    observation = """- scrollUntilVisible:
+    element: '^ログイン済み$|^未ログイン$|^Continue$|^続ける$'
+    direction: UP
+    timeout: 120000
+    centerElement: false
+- extendedWaitUntil:
+    visible: 'Continue|続ける|未ログイン'
+    timeout: 120000
+"""
+    return flow.replace(marker, observation + marker)
+
+
 def main():
     if os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted':
         raise RuntimeError('Disposable hosted runner required')
     EVIDENCE.mkdir(parents=True, exist_ok=True)
+    observation_mode = os.environ.pop('LOGOUT_OBSERVATION', 'confirmation-first')
+    if observation_mode not in {'confirmation-first', 'status-first'}:
+        raise ValueError('Unknown logout observation mode')
+    (EVIDENCE / 'scenario.json').write_text(json.dumps({'logout_observation': observation_mode}))
     diagnostics_required = os.environ.pop('EXPECT_SDK_DIAGNOSTICS', 'false') == 'true'
     target = os.environ.pop('PROBE_TARGET', 'sandbox')
     if target not in {'sandbox', 'docker'}:
@@ -374,6 +395,8 @@ def main():
 - assertNotVisible: '^ログイン済み$'
 - takeScreenshot: .build/private-evidence/logout-persisted
 ''')
+    if observation_mode == 'status-first':
+        flow.write_text(observe_status_before_confirmation(flow.read_text()))
     clean_env = {k:v for k,v in env.items() if k in {'DEVELOPER_DIR','HOME','JAVA_HOME','LANG','LC_ALL','PATH','TMPDIR'}}
     clean_env.update({'MAESTRO_' + key: credentials[key] for key in ('E2E_USERNAME', 'E2E_PASSWORD')})
     clean_env.update(MAESTRO_CLI_NO_ANALYTICS='1', MAESTRO_DISABLE_UPDATE_CHECK='true',

@@ -52,3 +52,13 @@ class AssociationReadinessTest(unittest.TestCase):
                 probe.wait_for_associations('device', '/swcutil', 'TEAM.example.app', ['auth.example.test'], timeout=10)
             run.assert_called_once()
             self.assertEqual(run.call_args.kwargs['timeout'], 9)
+
+    def test_status_observation_preserves_one_confirmation(self):
+        marker = "- tapOn:\n    text: 'Continue|続ける'\n    optional: true\n    retryTapIfNoChange: false\n"
+        modified = probe.observe_status_before_confirmation(marker)
+        self.assertEqual(modified.count('- tapOn:'), 1)
+        self.assertLess(modified.index('scrollUntilVisible'), modified.index('- tapOn:'))
+        self.assertIn('timeout: 120000', modified)
+        self.assertNotIn('repeat:', modified)
+        with self.assertRaises(ValueError):
+            probe.observe_status_before_confirmation(marker + marker)

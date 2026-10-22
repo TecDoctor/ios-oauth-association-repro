@@ -11,6 +11,11 @@ on:
         description: Optional diagnostic SDK branch (empty uses its latest default branch)
         type: string
         default: ''
+      logout-observation:
+        description: Isolate native status observation before the logout confirmation
+        type: choice
+        options: [confirmation-first, status-first]
+        default: confirmation-first
       safari-foreground-probe:
         description: Experimental public Maestro runner that skips background Safari queries
         type: boolean
@@ -104,6 +109,7 @@ jobs:
           python3 scripts/patch_public_maestro.py package "$RUNNER_TEMP/public-driver-source/Maestro" "$RUNNER_TEMP/maestro/maestro/lib/maestro-ios-driver.jar"
       - name: Verify one login and logout
         env:
+          LOGOUT_OBSERVATION: ${{ inputs.logout-observation || 'confirmation-first' }}
           EXPECT_SDK_DIAGNOSTICS: ${{ inputs.sdk-ref == 'fruwe/HEP-3370-ui-diagnostics' && 'true' || 'false' }}
           PROBE_TARGET: ${{ inputs.target || 'sandbox' }}
           SANDBOX_CREDENTIALS_JSON: ${{ inputs.target != 'docker' && secrets.SANDBOX_CREDENTIALS_JSON || '' }}
