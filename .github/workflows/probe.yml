@@ -5,7 +5,7 @@ on:
       target:
         description: Prepared environment for the single login/logout probe
         type: choice
-        options: [sandbox, docker]
+        options: [sandbox, docker, android-health]
         default: sandbox
       sdk-ref:
         description: Optional diagnostic SDK branch (empty uses its latest default branch)
@@ -18,11 +18,11 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: sdk-handoff-observation
+  group: ${{ inputs.target == 'android-health' && 'stock-android-health' || 'sdk-handoff-observation' }}
   cancel-in-progress: false
 jobs:
   probe:
-    if: github.repository == 'TecDoctor/ios-oauth-association-repro' && github.ref == 'refs/heads/fruwe/HEP-3370-wireguard-proof'
+    if: github.repository == 'TecDoctor/ios-oauth-association-repro' && github.ref == 'refs/heads/fruwe/HEP-3370-wireguard-proof' && inputs.target != 'android-health'
     runs-on: xcode-27
     timeout-minutes: 75
     steps:
@@ -123,3 +123,22 @@ jobs:
       - name: Remove temporary private material
         if: always()
         run: rm -rf -- sdk-private private-owner .build "$RUNNER_TEMP/public-driver-source"
+
+  android-health:
+    if: github.repository == 'TecDoctor/ios-oauth-association-repro' && github.ref == 'refs/heads/fruwe/HEP-3370-wireguard-proof' && inputs.target == 'android-health'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Observe a disposable stock Android image
+        run: bash scripts/android_health.sh
+      - name: Upload stock OS diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: stock-android-health
+          path: results/android-health/
+          if-no-files-found: ignore
+          retention-days: 3
