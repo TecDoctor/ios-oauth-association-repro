@@ -1,5 +1,10 @@
 """Synthetic public fixtures for read-only OS association matching."""
 import unittest
+import tempfile
+from pathlib import Path
+from unittest import mock
+import subprocess
+import probe_sdk_handoff as probe
 from probe_sdk_handoff import associations_approved
 
 
@@ -20,3 +25,30 @@ class AssociationReadinessTest(unittest.TestCase):
             self.snapshot('auth.example.test?mode=unexpected'),
         ):
             self.assertFalse(associations_approved(snapshot, 'TEAM.example.app', ['auth.example.test']))
+
+    def test_slow_observation_does_not_start_authentication_or_reset_deadline(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+             mock.patch.object(probe, 'EVIDENCE', Path(temporary)), \
+             mock.patch.object(probe, 'record_host_load'), \
+             mock.patch.object(probe.time, 'sleep'), \
+             mock.patch.object(probe.time, 'monotonic', side_effect=[0, 1, 1, 121, 121, 126, 126, 130]), \
+             mock.patch.object(probe, 'run', side_effect=[
+                 subprocess.TimeoutExpired(['swcutil', 'show'], 120), self.snapshot().encode(),
+             ]) as run:
+            self.assertEqual(probe.wait_for_associations('device', '/swcutil', 'TEAM.example.app', ['auth.example.test']), 130)
+            self.assertEqual(run.call_count, 2)
+            for call in run.call_args_list:
+                self.assertEqual(call.args[0][-1], 'show')
+                self.assertEqual(call.kwargs['timeout'], 120)
+
+    def test_pending_registration_fails_at_original_deadline(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+             mock.patch.object(probe, 'EVIDENCE', Path(temporary)), \
+             mock.patch.object(probe, 'record_host_load'), \
+             mock.patch.object(probe.time, 'sleep'), \
+             mock.patch.object(probe.time, 'monotonic', side_effect=[0, 1, 1, 9, 9, 10]), \
+             mock.patch.object(probe, 'run', return_value=b'') as run:
+            with self.assertRaisesRegex(RuntimeError, 'before authentication'):
+                probe.wait_for_associations('device', '/swcutil', 'TEAM.example.app', ['auth.example.test'], timeout=10)
+            run.assert_called_once()
+            self.assertEqual(run.call_args.kwargs['timeout'], 9)

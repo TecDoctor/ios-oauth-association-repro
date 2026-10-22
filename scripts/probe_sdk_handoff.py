@@ -58,13 +58,23 @@ def wait_for_associations(udid, executable, identity, domains, timeout=1000):
     if executable is None:
         raise RuntimeError('Association readiness tool unavailable')
     started = time.monotonic()
+    observations = []
     while time.monotonic() - started < timeout:
-        # Observe OS registration only. Never add, approve, reset, or retry authentication.
+        # Observe registration within one deadline; never start authentication here.
         remaining = max(1, int(timeout - (time.monotonic() - started)))
-        state = run(['xcrun', 'simctl', 'spawn', udid, str(executable), 'show'],
-                    'association-readiness', timeout=min(30, remaining)).decode()
-        if associations_approved(state, identity, domains):
-            elapsed = round(time.monotonic() - started, 3)
+        record_host_load()
+        status = 'pending'
+        try:
+            state = run(['xcrun', 'simctl', 'spawn', udid, str(executable), 'show'],
+                        'association-readiness', timeout=min(120, remaining)).decode()
+            if associations_approved(state, identity, domains):
+                status = 'approved'
+        except subprocess.TimeoutExpired:
+            status = 'observation_timeout'
+        elapsed = round(time.monotonic() - started, 3)
+        observations.append({'elapsed_seconds': elapsed, 'status': status})
+        (EVIDENCE / 'readiness-observations.json').write_text(json.dumps(observations))
+        if status == 'approved':
             print(json.dumps({'association_ready_seconds': elapsed}), flush=True)
             return elapsed
         time.sleep(min(5, max(0, timeout - (time.monotonic() - started))))
@@ -205,6 +215,7 @@ def main():
             association_tool = candidate
     except (RuntimeError, subprocess.TimeoutExpired, KeyError, StopIteration, ValueError):
         pass
+    record_host_load()
     association_before = capture_association(udid, association_tool, 'association-before-login')
     run(['xcrun', 'simctl', 'launch', udid, bundle], 'launch-before-readiness', timeout=120)
     domains = [value.removeprefix('webcredentials:').split('?', 1)[0] for value in
