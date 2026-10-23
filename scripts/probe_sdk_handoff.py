@@ -157,6 +157,22 @@ def observe_status_before_confirmation(flow):
     return flow.replace(marker, observation + marker)
 
 
+def recenter_logout(flow):
+    marker = "- tapOn:\n    id: sample.oauth.logout\n    retryTapIfNoChange: false\n"
+    if flow.count(marker) != 1:
+        raise ValueError('Expected exactly one logout tap')
+    observation = """- scrollUntilVisible:
+    element:
+      id: sample.oauth.logout
+    direction: UP
+    timeout: 120000
+    speed: 20
+    visibilityPercentage: 100
+    centerElement: true
+"""
+    return flow.replace(marker, observation + marker)
+
+
 def main():
     if os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted':
         raise RuntimeError('Disposable hosted runner required')
@@ -164,7 +180,8 @@ def main():
     observation_mode = os.environ.pop('LOGOUT_OBSERVATION', 'confirmation-first')
     if observation_mode not in {'confirmation-first', 'status-first'}:
         raise ValueError('Unknown logout observation mode')
-    (EVIDENCE / 'scenario.json').write_text(json.dumps({'logout_observation': observation_mode}))
+    logout_recenter = os.environ.pop('LOGOUT_RECENTER', 'false') == 'true'
+    (EVIDENCE / 'scenario.json').write_text(json.dumps({'logout_observation': observation_mode, 'logout_recenter': logout_recenter}))
     diagnostics_required = os.environ.pop('EXPECT_SDK_DIAGNOSTICS', 'false') == 'true'
     target = os.environ.pop('PROBE_TARGET', 'sandbox')
     if target not in {'sandbox', 'docker'}:
@@ -395,6 +412,8 @@ def main():
 - assertNotVisible: '^ログイン済み$'
 - takeScreenshot: .build/private-evidence/logout-persisted
 ''')
+    if logout_recenter:
+        flow.write_text(recenter_logout(flow.read_text()))
     if observation_mode == 'status-first':
         flow.write_text(observe_status_before_confirmation(flow.read_text()))
     clean_env = {k:v for k,v in env.items() if k in {'DEVELOPER_DIR','HOME','JAVA_HOME','LANG','LC_ALL','PATH','TMPDIR'}}

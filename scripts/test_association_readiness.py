@@ -62,3 +62,14 @@ class AssociationReadinessTest(unittest.TestCase):
         self.assertNotIn('repeat:', modified)
         with self.assertRaises(ValueError):
             probe.observe_status_before_confirmation(marker + marker)
+
+    def test_logout_recentering_keeps_one_action_and_rejects_ambiguous_flow(self):
+        marker = "- tapOn:\n    id: sample.oauth.logout\n    retryTapIfNoChange: false\n"
+        modified = probe.recenter_logout(marker)
+        self.assertEqual(modified.count('- tapOn:'), 1)
+        self.assertEqual(modified.count('scrollUntilVisible:'), 1)
+        self.assertLess(modified.index('direction: UP'), modified.index('- tapOn:'))
+        self.assertNotIn('repeat:', modified)
+        for invalid in ('', marker + marker):
+            with self.assertRaises(ValueError):
+                probe.recenter_logout(invalid)

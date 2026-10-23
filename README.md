@@ -10,12 +10,15 @@ disposable runner. Credentials come from encrypted Actions secrets and all raw
 evidence is encrypted before upload. Sandbox uses no GCP resources; the optional
 Docker target connects to an already prepared remote cluster.
 
-Two optional diagnostic controls keep experimental results separate:
+Optional diagnostic controls keep experimental results separate:
 
 - `logout-observation=status-first` observes the native status before handling
   the logout confirmation; the default handles confirmation first. Both make
   one login and one logout attempt. This comparison does not establish a cause
   from a single success.
+- `logout-recenter=true` adds one upward centering observation before the single
+  logout tap, isolating the effect of approaching the control in both directions.
+  It does not repeat the tap or assert that scrolling caused a prior failure.
 - `target=android-health` runs an independent stock Android 35 image on Ubuntu,
   opens Settings and Chrome once, and records a three-minute ANR observation.
   It fetches no private application, uses no secrets, and creates no cloud

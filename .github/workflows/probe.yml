@@ -20,6 +20,10 @@ on:
         type: choice
         options: [confirmation-first, status-first]
         default: confirmation-first
+      logout-recenter:
+        description: Add an upward centering observation before the single Logout tap
+        type: boolean
+        default: false
       safari-foreground-probe:
         description: Experimental public Maestro runner that skips background Safari queries
         type: boolean
@@ -113,6 +117,7 @@ jobs:
           python3 scripts/patch_public_maestro.py package "$RUNNER_TEMP/public-driver-source/Maestro" "$RUNNER_TEMP/maestro/maestro/lib/maestro-ios-driver.jar"
       - name: Verify one login and logout
         env:
+          LOGOUT_RECENTER: ${{ inputs.logout-recenter && 'true' || 'false' }}
           LOGOUT_OBSERVATION: ${{ inputs.logout-observation || 'confirmation-first' }}
           EXPECT_SDK_DIAGNOSTICS: ${{ inputs.sdk-ref == 'fruwe/HEP-3370-ui-diagnostics' && 'true' || 'false' }}
           PROBE_TARGET: ${{ inputs.target || 'sandbox' }}
